@@ -8,6 +8,9 @@ pub const BOSS_BAR_DUMP_BYTES: usize = 64;
 const BOSS_BAR_OBJECT_RVA: u32 = 0x277_E230;
 const BOSS_BAR_SUB_OBJECT_OFFSET: u64 = 0x288;
 const BOSS_BAR_HANDLE_OFFSET: u64 = 0x70;
+const BOSS_BAR_STATE_OFFSET: u64 = 0x8;
+const BOSS_BAR_STATE_NEVER_OPENED: i32 = 0;
+const BOSS_BAR_STATE_CLOSED: i32 = 3;
 const UI_MANAGER_RVA: u32 = 0x17B_90D0;
 const UI_MANAGER_HUD_OFFSET: u64 = 0x98;
 const HUD_BOSS_LIFE_WIDGET_OFFSET: u64 = 0x1D0;
@@ -45,6 +48,19 @@ pub fn read_script_argument<M: GameMemory>(memory: &M, command: u64, index: u64)
 
 pub fn read_boss_bar_handle<M: GameMemory>(memory: &M) -> Option<ActorHandle> {
     ActorHandle::read(memory, boss_bar_sub_object(memory) + BOSS_BAR_HANDLE_OFFSET)
+}
+
+/// The boss life gauge (the `CBossLifeGauge` at HUD `+0x288`) is up: its state is neither 0 (never
+/// opened) nor 3 (closed by `_CloseBossLifeGauge`), as the gauge's own vslot `0x70` reads it.
+pub fn boss_bar_state_is_open(state: i32) -> bool {
+    state != BOSS_BAR_STATE_NEVER_OPENED && state != BOSS_BAR_STATE_CLOSED
+}
+
+pub fn read_boss_bar_open<M: GameMemory>(memory: &M) -> Option<bool> {
+    memory
+        .read_i32(boss_bar_sub_object(memory) + BOSS_BAR_STATE_OFFSET)
+        .ok()
+        .map(boss_bar_state_is_open)
 }
 
 pub fn boss_bar_init_text(handle: Option<ActorHandle>, enemy: Option<&str>) -> String {

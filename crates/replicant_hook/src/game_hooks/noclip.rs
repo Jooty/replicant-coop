@@ -135,6 +135,9 @@ fn drive_player(actor: usize) -> bool {
         let is_local_player = game
             .playable_actor()
             .is_ok_and(|player| player == actor as u64);
+        if is_local_player {
+            crate::teleport::note_mod_move();
+        }
         is_local_player
             && game
                 .write_noclip_step(actor as u64, read_noclip_input().displacement())

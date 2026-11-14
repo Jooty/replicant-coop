@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, TimeZone};
+use chrono::{DateTime, NaiveDateTime, TimeZone};
 use thiserror::Error;
 
 const STAMP_FORMAT: &str = "%Y%m%d-%H%M%S";
+const STAMP_LABEL_FORMAT: &str = "%d %b, %H:%M";
 
 #[derive(Debug, Error)]
 pub enum BackupError {
@@ -22,6 +23,14 @@ where
     Tz::Offset: std::fmt::Display,
 {
     moment.format(STAMP_FORMAT).to_string()
+}
+
+/// A backup's stamp the way the backup list reads it ("12 Nov, 13:40"); a stamp of another shape is shown as it is.
+pub fn stamp_label(stamp: &str) -> String {
+    NaiveDateTime::parse_from_str(stamp, STAMP_FORMAT).map_or_else(
+        |_| stamp.to_owned(),
+        |moment| moment.format(STAMP_LABEL_FORMAT).to_string(),
+    )
 }
 
 pub fn backup_saves(

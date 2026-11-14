@@ -1,4 +1,10 @@
+mod body_following_camera;
+mod camera_aim_follow;
+mod camera_control;
+mod camera_follow;
 mod engine_slots;
+mod eye_set_tally;
+mod fixed_camera_reading;
 mod guest;
 mod host;
 mod object_calls;
@@ -7,6 +13,7 @@ mod player_waits;
 mod radio_waits;
 mod replayer;
 mod requests;
+mod scripted_camera;
 mod start_entry;
 mod stream;
 mod stream_stall;
@@ -14,9 +21,46 @@ mod table;
 mod tape;
 mod window;
 
+pub use body_following_camera::{
+    CAMERA_MOVE_PAST_THE_BODY_MOVE_IS_A_JUMP_WORLD_UNITS, CameraBodyOffset, body_and_offset_text,
+    camera_follows_body,
+};
+pub use camera_aim_follow::{
+    CAMERA_AIM_MOVE_SENT_AGAIN_WORLD_UNITS, CAMERA_AIM_SENT_AGAIN_AFTER_MS, CameraAimReceipt,
+    GuestAimStep, GuestCameraAimFollow, HostCameraAim, HostCameraAimResend, pose_moved,
+};
+pub use camera_control::{
+    CAMERA_FOLLOW_UP_LOG_MIN_MS, CAMERA_STATE_LOG_EVERY_MS, CAMERA_SWITCH_BLOCK_BYTE_RVA,
+    CAMERA_SWITCH_FORCES_SNOW_BYTE_RVA, CAMERA_SWITCH_LOCK_BYTE_RVA,
+    CAMERA_SWITCH_ONLY_CAMERA_2_BYTE_RVA, CAMERA_SWITCH_ONLY_CAMERA_2_OVERRIDE_BYTE_RVA,
+    CameraCallOutcome, CameraSwitchGates, DIRECTION_SET_MATCH_RADIANS, FIXED_CAMERA_INDEX,
+    FREE_CAMERA_BASE_PITCH_OFFSET, FREE_CAMERA_BASE_YAW_OFFSET, FREE_CAMERA_DIRECTION_CONTROL_RVA,
+    FREE_CAMERA_DIRECTION_SLOT_COUNT, FREE_CAMERA_DIRECTION_SLOT_PITCH_LERP_OFFSET,
+    FREE_CAMERA_DIRECTION_SLOT_STRIDE_BYTES, FreeDirectionState, REFUSED_CAMERA_CALL_GIVE_UP_MS,
+    REFUSED_CAMERA_CALL_RETRY_EVERY_MS, RefusedCallStep, RefusedCameraCall, RefusedCameraCalls,
+    SCRIPTED_FREE_DIRECTION_SLOT, SNOW_CAMERA_INDEX, angle_gap_radians,
+    camera_index_of_change_kind, camera_outcome_text, camera_state_line,
+    free_direction_matches_request, free_direction_text, integer_argument_slots, judge_camera_call,
+    read_camera_switch_gates, read_free_direction_state, requested_blend_seconds,
+    requested_free_direction, runs_again_when_refused, switch_gates_text,
+};
+pub use camera_follow::{
+    CAMERA_SWITCH_TO_RVA, CameraSwitch, CameraSwitchAsker, FixedCameraPose, GuestCameraFollow,
+    HOST_CAMERA_APPLIED_AFTER_TICKS, HostCamera, HostCameraFollow, HostCameraReceipt,
+    HostCameraSkip, camera_switch_line, change_kind_of_camera,
+};
 pub use engine_slots::{
     callback_registry_kind_address, fired_registry_index, is_player_tested_callback_kind,
     is_registered_callback_kind, pop_source, script_slot_state,
+};
+pub use eye_set_tally::{
+    EYE_SET_CALLER_SLOTS, EYE_SET_CALLERS_LISTED, EyeSetStretch, EyeSetTally,
+    FIXED_CAMERA_SET_EYE_RVA, eye_set_text,
+};
+pub use fixed_camera_reading::{
+    FIXED_CAMERA_EYE_LERP_END_OFFSET, FIXED_CAMERA_LOOK_ACTOR_GENERATION_OFFSET,
+    FIXED_CAMERA_LOOK_LERP_END_OFFSET, FIXED_CAMERA_LOOK_POINT_OFFSET, FIXED_CAMERA_RVA,
+    FixedCameraReading, fixed_camera_text, read_fixed_camera_pose, read_fixed_camera_reading,
 };
 pub use guest::{
     GuestArrival, GuestFightStream, GuestNotice, GuestOpen, GuestPop, GuestRadioWaitCall,
@@ -36,6 +80,12 @@ pub use replayer::{Arrival, InFlight, PopSource, PopVerdict, Replayer, SlotState
 pub use requests::{
     HostPop, HostRequests, QueueRefusal, RequestAnswer, RequestCall, RequestReceipt,
     SceneHoldChange,
+};
+pub use scripted_camera::{
+    RESET_FREE_CAMERA_DIRECTION_WITH_ACTOR_GROUP_NATIVE_RVA, SET_FIXED_CAMERA_NATIVE_RVA,
+    SET_FREE_CAMERA_DIRECTION_FIXED_NATIVE_RVA, SET_FREE_CAMERA_DISTANCE_OFFSET_NATIVE_RVA,
+    ScriptedCameraNative, angle_between_degrees, camera_call_line, direction_text,
+    forward_of_world_matrix, look_angles_degrees, read_native_numbers,
 };
 pub use start_entry::{StartEntry, StartStreamPop};
 pub use stream::{StreamEntry, StreamRecorder};

@@ -7,7 +7,7 @@ use replicant_game::GameMemory;
 use replicant_game::attack_gauge::attack_gauge_boot_text;
 use replicant_game::attack_gauge::{
     ATTACK_GAUGE_DUMMY_HIT_RVA, ATTACK_GAUGE_NODE_HP_OFFSET, ATTACK_GAUGE_REMAINING_SECONDS_OFFSET,
-    GUEST_GAUGE_MEASURING_HP, GaugeNodeReading, UPDATE_ATTACK_GAUGE_RVA,
+    GUEST_GAUGE_MEASURING_HP, GaugeNodeReading, GaugeSwingMiss, UPDATE_ATTACK_GAUGE_RVA,
     guest_node_hp_after_own_hit, guest_remaining_floor, measured_gauge_damage, own_gauge_hit_text,
     read_gauge, write_node_hp,
 };
@@ -15,8 +15,8 @@ use replicant_game::enemies::AttackRecord;
 use replicant_proto::{AttackGaugeHit, Message};
 
 use crate::attack_gauge::state::{
-    GUEST, GUEST_MIRRORING, HOOKED_BUILD, ORIGINAL_DUMMY_HIT, ORIGINAL_UPDATE, now_ms,
-    off_file_present,
+    GUEST, GUEST_HOLDS_GAUGE_HITS, HOOKED_BUILD, HeldGaugeHit, ORIGINAL_DUMMY_HIT, ORIGINAL_UPDATE,
+    now_ms, off_file_present,
 };
 use crate::build_gate::VerifiedBuild;
 use crate::diagnostics::log_line;
@@ -28,7 +28,7 @@ type DummyHit = unsafe extern "system" fn(*mut c_void, *mut c_void, *mut c_void,
 type Update = unsafe extern "system" fn(*mut c_void, f32);
 
 struct Measuring {
-    serial: u32,
+    serial: Option<u32>,
     nodes: Vec<(u8, GaugeNodeReading, i32)>,
 }
 
@@ -70,7 +70,7 @@ extern "system" fn dummy_hit_detour(
     result: *mut c_void,
     collision: i32,
 ) -> u64 {
-    let measuring = if GUEST_MIRRORING.load(Ordering::Acquire) {
+    let measuring = if GUEST_HOLDS_GAUGE_HITS.load(Ordering::Acquire) {
         panic::catch_unwind(|| begin_measuring(dummy as u64))
             .ok()
             .flatten()
@@ -96,7 +96,7 @@ extern "system" fn dummy_hit_detour(
     reason = "calls the original gauge update through the trampoline"
 )]
 extern "system" fn update_detour(manager: *mut c_void, seconds: f32) {
-    if GUEST_MIRRORING.load(Ordering::Acquire) {
+    if GUEST_HOLDS_GAUGE_HITS.load(Ordering::Acquire) {
         let _ = panic::catch_unwind(|| hold_clock(manager as u64));
     }
     let original = ORIGINAL_UPDATE.load(Ordering::Acquire);
@@ -123,13 +123,11 @@ fn hold_clock(manager: u64) {
 
 fn begin_measuring(dummy: u64) -> Option<Measuring> {
     let build = HOOKED_BUILD.get()?;
-    let serial = GUEST
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .mirrored_serial?;
+    let mut guest = GUEST.lock().unwrap_or_else(PoisonError::into_inner);
     let mut memory = InProcessMemory::new(build);
     let reading = read_gauge(&memory)?;
     if reading.dummy != dummy {
+        guest.tally.miss(GaugeSwingMiss::OtherDummy);
         return None;
     }
     let mut nodes = Vec::new();
@@ -139,7 +137,10 @@ fn begin_measuring(dummy: u64) -> Option<Measuring> {
             nodes.push((index, node, node.node.hp));
         }
     }
-    Some(Measuring { serial, nodes })
+    Some(Measuring {
+        serial: guest.mirrored_serial,
+        nodes,
+    })
 }
 
 fn finish_measuring(measuring: Measuring, record: u64) {
@@ -148,40 +149,70 @@ fn finish_measuring(measuring: Measuring, record: u64) {
     };
     let mut memory = InProcessMemory::new(build);
     let hit_id = AttackRecord::read(&memory, record).map_or(0, |attack| attack.hit_id);
+    let mut took_any = false;
     for (index, node, shown) in measuring.nodes {
         let after = memory
             .read_i32(node.address + ATTACK_GAUGE_NODE_HP_OFFSET)
             .unwrap_or(GUEST_GAUGE_MEASURING_HP);
         let damage = measured_gauge_damage(GUEST_GAUGE_MEASURING_HP, after);
-        let sent = damage.and_then(|damage| send_hit(measuring.serial, index, hit_id, damage));
-        let hp = match (damage, sent) {
-            (Some(damage), Some(_)) => guest_node_hp_after_own_hit(shown, damage),
+        took_any |= damage.is_some();
+        let counted =
+            damage.is_some_and(|damage| count_hit(measuring.serial, index, hit_id, damage));
+        let hp = match damage {
+            Some(damage) if counted => guest_node_hp_after_own_hit(shown, damage),
             _ => shown,
         };
         let _ = write_node_hp(&mut memory, &node, hp);
     }
+    if !took_any {
+        GUEST
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .tally
+            .miss(GaugeSwingMiss::GameTookNothing);
+    }
 }
 
-fn send_hit(serial: u32, node: u8, hit_id: u32, damage: i32) -> Option<u32> {
-    let (phase, seq) = {
-        let mut guest = GUEST.lock().unwrap_or_else(PoisonError::into_inner);
-        let seq = guest.hits.take(now_ms(), node, hit_id);
-        (guest.phase, seq)
-    };
-    let Some(seq) = seq else {
+fn count_hit(serial: Option<u32>, node: u8, hit_id: u32, damage: i32) -> bool {
+    let mut guest = GUEST.lock().unwrap_or_else(PoisonError::into_inner);
+    let Some(seq) = guest.hits.take(now_ms(), node, hit_id) else {
+        guest.tally.miss(GaugeSwingMiss::SameSwing);
+        drop(guest);
         log_line(&format!(
             "attack gauge: the same swing hit node {node} again, not sent"
         ));
-        return None;
+        return false;
     };
-    let net = net::handle()?;
+    let Some(serial) = serial else {
+        guest.held_hits.push(HeldGaugeHit { node, damage, seq });
+        guest.tally.held = guest.tally.held.saturating_add(1);
+        drop(guest);
+        log_line(&format!(
+            "attack gauge: your hit on node {node} took {damage}, held as number {seq} until the host's opening arrives"
+        ));
+        return true;
+    };
+    let phase = guest.phase;
+    let sent = send_gauge_hit(phase, serial, HeldGaugeHit { node, damage, seq });
+    if sent {
+        guest.tally.sent = guest.tally.sent.saturating_add(1);
+    } else {
+        guest.tally.miss(GaugeSwingMiss::NotConnected);
+    }
+    sent
+}
+
+pub(super) fn send_gauge_hit(phase: u16, serial: u32, hit: HeldGaugeHit) -> bool {
+    let Some(net) = net::handle() else {
+        return false;
+    };
     net.send_relayed(Message::AttackGaugeHit(AttackGaugeHit {
         phase,
         serial,
-        node,
-        damage,
-        seq,
+        node: hit.node,
+        damage: hit.damage,
+        seq: hit.seq,
     }));
-    log_line(&own_gauge_hit_text(node, damage, seq, serial));
-    Some(seq)
+    log_line(&own_gauge_hit_text(hit.node, hit.damage, hit.seq, serial));
+    true
 }

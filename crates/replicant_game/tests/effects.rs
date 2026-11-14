@@ -1,8 +1,9 @@
 use replicant_game::effects::{
-    LiveEffects, MAX_LASTING_SENT_EFFECTS, MAX_LIVE_PUPPET_EFFECTS, PUPPET_EFFECT_MAX_LIFETIME_MS,
-    RateWindow, SOUND_FALLOFF_FAR_UNITS, SOUND_FALLOFF_NEAR_UNITS, SentEffects, build_effect_call,
-    effect_instance_address, effect_is_finished, finish_effect, match_anchor_offset,
-    read_anchor_offset, read_effect, read_sound, sound_gain,
+    EffectNameTally, LiveEffects, MAX_LASTING_SENT_EFFECTS, MAX_LIVE_PUPPET_EFFECTS,
+    PUPPET_EFFECT_MAX_LIFETIME_MS, RateWindow, SOUND_FALLOFF_FAR_UNITS, SOUND_FALLOFF_NEAR_UNITS,
+    SentEffects, build_effect_call, effect_instance_address, effect_is_finished, finish_effect,
+    match_anchor_offset, read_anchor_offset, read_effect, read_sound, sound_gain,
+    world_effects_shown_line,
 };
 use replicant_game::offsets::{
     EFFECT_ATTACH_BONE_OFFSET, EFFECT_ATTACH_SECOND_BONE_OFFSET, EFFECT_HANDLE_GENERATION_SHIFT,
@@ -323,4 +324,21 @@ fn a_puppet_takes_the_players_anchor_offset() {
     let before = match_anchor_offset(&mut memory, player, puppet).unwrap();
     assert_eq!(before, [0.0, 10.1, 0.0]);
     assert_eq!(read_anchor_offset(&memory, puppet).unwrap(), [0.0; 3]);
+}
+
+#[test]
+fn the_world_effects_line_names_each_effect_with_how_many_were_shown() {
+    let mut tally = EffectNameTally::default();
+    assert_eq!(world_effects_shown_line(&mut tally, 8), None);
+    tally.note("efE_beam01", true);
+    tally.note("efE_beam01", false);
+    tally.note("efE_beam01", true);
+    tally.note("efC_null", true);
+    assert_eq!(
+        world_effects_shown_line(&mut tally, 8).as_deref(),
+        Some(
+            "effects: last 5 s world effects from the partner by name: efE_beam01 x3 (2 shown, 1 not created), efC_null x1 (all shown)"
+        )
+    );
+    assert!(tally.is_empty());
 }

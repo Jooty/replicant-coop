@@ -83,6 +83,8 @@ pub(crate) fn on_function_traced(build: &VerifiedBuild, name: &str) {
         note_restart(&format!("{name} ran"));
     }
     clear_per_phase_sets_after_a_load();
+    crate::kaine::companion_off_function_ran(build, name);
+    crate::kaine::stand_in_function_ran(name);
     let Some((phase, label)) = local_phase_and_label(build) else {
         return;
     };
@@ -139,8 +141,7 @@ pub(crate) fn on_function_traced(build: &VerifiedBuild, name: &str) {
     let view = net.view();
     let partner_same_phase = view.partner_in_play()
         && view
-            .remote
-            .as_ref()
+            .partner_state()
             .is_some_and(|remote| remote.state.phase == phase);
     if !shared_story_events() || view.state != NetState::Connected || !partner_same_phase {
         log_line(&format!(

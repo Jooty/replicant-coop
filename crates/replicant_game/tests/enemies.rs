@@ -57,6 +57,7 @@ fn snapshot(tick: u32, enemies: Vec<EnemyState>) -> EnemySnapshot {
         part: 0,
         parts: 1,
         total: u16::try_from(enemies.len()).expect("small"),
+        round: u16::try_from(enemies.len()).expect("small"),
         enemies,
     }
 }
@@ -250,6 +251,7 @@ fn when_too_many_enemies_the_nearest_to_either_player_are_sent() {
     assert_eq!(sent[0], count - 1);
     assert!(!sent.contains(&0));
     assert_eq!(parts[0].total, count);
+    assert_eq!(usize::from(parts[0].round), limit);
 }
 
 #[test]

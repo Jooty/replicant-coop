@@ -26,7 +26,8 @@ pub struct EnemyState {
 }
 
 /// One part of the host's enemy snapshot for `tick`. A snapshot too big for one message is split
-/// into `parts` messages that share the tick; `total` is how many enemies the host sees in all.
+/// into `parts` messages that share the tick. `total` is how many enemies the host has in all and
+/// `round` is how many of them this round holds; the two differ when the host has more than a round fits.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EnemySnapshot {
     pub tick: u32,
@@ -34,6 +35,7 @@ pub struct EnemySnapshot {
     pub part: u8,
     pub parts: u8,
     pub total: u16,
+    pub round: u16,
     pub enemies: Vec<EnemyState>,
 }
 
@@ -166,6 +168,14 @@ impl EnemySnapshot {
         if self.parts == 0 || self.parts > MAX_ENEMY_SNAPSHOT_PARTS || self.part >= self.parts {
             return Err(WireError::OutOfRange {
                 field: "snapshot_part",
+            });
+        }
+        if self.round > self.total
+            || usize::from(self.round)
+                > MAX_ENEMIES_PER_SNAPSHOT * usize::from(MAX_ENEMY_SNAPSHOT_PARTS)
+        {
+            return Err(WireError::OutOfRange {
+                field: "snapshot_round",
             });
         }
         if self.enemies.len() > MAX_ENEMIES_PER_SNAPSHOT {

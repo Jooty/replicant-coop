@@ -1,6 +1,7 @@
 mod boss_bar_probe;
 mod boss_hit_log;
 mod boss_motion_probe;
+mod bullet_hit_hook;
 mod ca_gauge_probe;
 mod combat;
 mod combat_view;
@@ -9,6 +10,7 @@ mod companion_probe;
 mod counters;
 mod drop_hook;
 mod game_calls;
+mod gauge_opening_replay;
 mod guest_combat;
 mod hit_hook;
 mod hold_hook;
@@ -22,6 +24,7 @@ mod word_drop_hook;
 
 pub(crate) use combat_view::applying_remote;
 pub use counters::CombatCounts;
+pub(crate) use gauge_opening_replay::{OpeningReplayStep, replay_guest_opening_hit};
 pub(crate) use hold_hook::cut_copy_step_before_move;
 pub use install::install;
 pub use shared_actors::shared_enemy_actors;

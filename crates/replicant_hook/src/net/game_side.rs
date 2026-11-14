@@ -75,6 +75,7 @@ pub fn start_auto() {
     crate::frame_tuning::load_frame_tuning();
     if let Ok(Some(config)) = AutoConfig::load_beside_game() {
         crate::event_log::set_event_log_enabled(config.event_log_enabled());
+        crate::kaine::set_companion_rows_from_scripts(config.companion_rows_from_scripts_enabled());
     }
     match AutoConfig::load_beside_game() {
         Ok(Some(AutoConfig {

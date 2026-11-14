@@ -47,6 +47,11 @@ impl NetThread {
             .send_to_launcher(Message::SessionOptions(options));
     }
 
+    pub fn tell_launcher_saved(&self, succeeded: bool) {
+        self.inner
+            .send_to_launcher(Message::GameSaved { succeeded });
+    }
+
     pub fn report_readiness(&self, readiness: GameReadiness) {
         self.inner.update(|shared| {
             shared.local_readiness = readiness;

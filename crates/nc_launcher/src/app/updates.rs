@@ -56,6 +56,16 @@ impl Launcher {
             .map(str::to_owned)
     }
 
+    /// The short build the build server offers for the game known by `game_id`, when it offers one.
+    pub fn server_build_for(&self, game_id: &str) -> Option<String> {
+        match &self.updater.state {
+            UpdateState::Available(update) if update.plan.hook_for(game_id).is_some() => {
+                Some(short_commit(&update.manifest.commit).to_owned())
+            }
+            _ => None,
+        }
+    }
+
     pub fn start_update_check(&mut self, ctx: &Context) {
         let Some(url) = self.update_url() else {
             return;

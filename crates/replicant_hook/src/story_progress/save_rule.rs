@@ -1,12 +1,10 @@
 use std::fs;
-use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
-use replicant_game::save_files::{COOP_GAMEDATA_BACKUP_FILE_NAME, COOP_GAMEDATA_FILE_NAME};
+use replicant_game::save_files::CoopSavePaths;
 use replicant_game::story_progress::{
-    PLAYER_NAME_BYTES, RANK_SIDECAR_FILE_NAME, SAVE_FILE_BYTES, SlotOutcome, SlotStory, StoryRank,
-    StoryRule, apply_story_rule, best_story_for_name, decode_high_water_sidecar,
-    encode_high_water_sidecar,
+    PLAYER_NAME_BYTES, SAVE_FILE_BYTES, SlotOutcome, SlotStory, StoryRank, StoryRule,
+    apply_story_rule, best_story_for_name, decode_high_water_sidecar, encode_high_water_sidecar,
 };
 
 use crate::diagnostics::log_line;
@@ -57,7 +55,7 @@ pub(super) fn arm(own: SlotStory, key: SnapshotKey) {
 /// Runs on the game's save thread for every write of the co-op file. Returns the file to write
 /// instead when the guest's rule changed a slot's story. The rule's new state only takes effect in
 /// [`finish_coop_save`], once the game's write succeeded.
-pub fn rewrite_coop_save(folder: &Path, data: &[u8]) -> Option<Vec<u8>> {
+pub fn rewrite_coop_save(paths: &CoopSavePaths, data: &[u8]) -> Option<Vec<u8>> {
     let mut armed = ARMED.lock().unwrap_or_else(PoisonError::into_inner);
     let armed = armed.as_mut()?;
     armed.pending = None;
@@ -70,13 +68,13 @@ pub fn rewrite_coop_save(folder: &Path, data: &[u8]) -> Option<Vec<u8>> {
     }
     if !armed.high_water_loaded {
         armed.high_water_loaded = true;
-        armed.rule.high_water = load_high_water(folder, &armed.rule.own_name);
+        armed.rule.high_water = load_high_water(paths, &armed.rule.own_name);
         log_line(&format!(
             "story: high water at the start of the session: {:?}",
             armed.rule.high_mark().map(describe)
         ));
     }
-    let on_disk = fs::read(folder.join(COOP_GAMEDATA_FILE_NAME))
+    let on_disk = fs::read(&paths.file)
         .ok()
         .filter(|bytes| bytes.len() == SAVE_FILE_BYTES);
     let mut rule = armed.rule.clone();
@@ -89,7 +87,7 @@ pub fn rewrite_coop_save(folder: &Path, data: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Runs after the game's write of the co-op file returned.
-pub fn finish_coop_save(folder: &Path, succeeded: bool) {
+pub fn finish_coop_save(paths: &CoopSavePaths, succeeded: bool) {
     let mut armed = ARMED.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(armed) = armed.as_mut() else {
         return;
@@ -110,7 +108,7 @@ pub fn finish_coop_save(folder: &Path, succeeded: bool) {
         return;
     };
     let bytes = encode_high_water_sidecar(story, &armed.rule.own_name);
-    match write_atomically(&folder.join(RANK_SIDECAR_FILE_NAME), &bytes) {
+    match write_atomically(&paths.rank_sidecar, &bytes) {
         Ok(()) => log_line(&format!(
             "story: high water is now {}",
             describe(story.rank())
@@ -121,9 +119,8 @@ pub fn finish_coop_save(folder: &Path, succeeded: bool) {
     }
 }
 
-fn load_high_water(folder: &Path, name: &[u8; PLAYER_NAME_BYTES]) -> Option<SlotStory> {
-    let sidecar = folder.join(RANK_SIDECAR_FILE_NAME);
-    match fs::read(&sidecar) {
+fn load_high_water(paths: &CoopSavePaths, name: &[u8; PLAYER_NAME_BYTES]) -> Option<SlotStory> {
+    match fs::read(&paths.rank_sidecar) {
         Ok(bytes) => match decode_high_water_sidecar(&bytes) {
             Some((story, stored_name)) if stored_name == *name => return Some(story),
             Some(_) => {
@@ -137,7 +134,7 @@ fn load_high_water(folder: &Path, name: &[u8; PLAYER_NAME_BYTES]) -> Option<Slot
             "story: cannot read the high water sidecar ({error})"
         )),
     }
-    let backup = fs::read(folder.join(COOP_GAMEDATA_BACKUP_FILE_NAME)).ok()?;
+    let backup = fs::read(&paths.backup).ok()?;
     best_story_for_name(&backup, name)
 }
 

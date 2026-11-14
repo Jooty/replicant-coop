@@ -1,15 +1,28 @@
 mod backup;
-mod bodies;
+mod campaign_backup;
+mod campaign_drop;
+mod campaign_id;
+mod campaign_seat;
+mod campaigns;
 mod coop;
 mod fresh;
+mod guest_seat;
+mod host_campaign;
 mod location;
 mod restore;
+mod seats;
 mod slots;
+mod write_atomic;
 
-pub use backup::{BackupError, backup_saves, copy_dir_recursive, format_stamp};
-pub use bodies::{
-    SlotBodies, coop_bodies_path, parse_slot_bodies, read_slot_bodies, render_slot_bodies,
-    slot_body, store_slot_body,
+pub use backup::{BackupError, backup_saves, copy_dir_recursive, format_stamp, stamp_label};
+pub use campaign_drop::{
+    SetAside, drop_campaign, drop_lost_campaigns, host_slots_that_lost_their_campaign,
+};
+pub use campaign_id::{campaign_id_from, new_campaign_id};
+pub use campaign_seat::{read_campaign_seat, store_campaign_seat};
+pub use campaigns::{
+    Campaign, CampaignRecord, SeatSummary, coop_campaigns_path, parse_campaigns, read_campaigns,
+    render_campaigns, store_campaign, write_campaigns,
 };
 pub use coop::{
     COOP_BACKUP_FOLDER, COOP_BEFORE_RESTORE_PREFIX, CoopTargetError, backup_coop_file,
@@ -17,12 +30,27 @@ pub use coop::{
     read_coop_slots, restore_coop_backup,
 };
 pub use fresh::fresh_coop_file;
-pub use location::{backup_root, coop_backup_root, save_dir};
+pub use guest_seat::{
+    PreparedSession, hidden_copy_path, keep_unsent, newest_seat_in, play_seconds_of,
+    prepare_session_file, promote_delivered, read_hidden_copy, read_session_file, read_unsent,
+    seat_backups_dir, seats_in, unsent_copy_path,
+};
+pub use host_campaign::{
+    ArrivedSeat, campaign_card_of, campaign_for_host_slot, keep_arrived_seat_aside,
+    seat_summary_of, store_arrived_seat,
+};
+pub use location::{backup_root, coop_backup_root, save_dir, save_folders};
 pub use replicant_game::save_files::GAMEDATA_FILE_NAME;
 pub use restore::{PRE_RESTORE_PREFIX, list_backups, restore_backup};
-pub use slots::{
-    SlotError, SlotSummary, default_slot, gamedata_path, parse_slots, read_slots, slot_player_name,
+pub use seats::{
+    SeatFileError, coop_seats_dir, finish_staged_seat, read_seat, seat_file_path,
+    set_aside_seats_dir, set_seat_aside, stage_seat, store_seat,
 };
+pub use slots::{
+    SlotError, SlotSummary, default_slot, gamedata_path, parse_slots, play_time_short,
+    play_time_text, read_slots, slot_label, slot_player_name, summarize_seat,
+};
+pub use write_atomic::{unix_seconds_now, unused_path, write_atomically};
 
 pub const MY_GAMES_FOLDER: &str = "My Games";
 pub const BACKUP_FOLDER: &str = "save-backups";

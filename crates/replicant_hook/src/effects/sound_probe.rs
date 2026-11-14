@@ -166,10 +166,27 @@ extern "system" fn sound_by_id_detour(
         });
     }
     // SAFETY: the trampoline continues into the original function, which has this signature.
-    unsafe {
+    let result = unsafe {
         core::mem::transmute::<*mut c_void, SoundById>(original)(
             manager, sound_id, position, fourth, fifth, sixth, seventh, eighth,
         )
+    };
+    let position = position as usize;
+    let _ = panic::catch_unwind(|| note_shot_sound(sound_id, position as u64, [fourth, fifth]));
+    result
+}
+
+fn note_shot_sound(sound_id: u32, position: u64, levels: [f32; 2]) {
+    let Some(build) = HOOKED_BUILD.get() else {
+        return;
+    };
+    if position == 0 {
+        return;
+    }
+    let memory = InProcessMemory::new(build);
+    let coordinate = |index: u64| memory.read_f32(position + index * 4);
+    if let (Ok(x), Ok(y), Ok(z)) = (coordinate(0), coordinate(1), coordinate(2)) {
+        crate::enemy_bullets::note_sound_made(sound_id, [x, y, z], levels);
     }
 }
 

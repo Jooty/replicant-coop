@@ -50,7 +50,8 @@ pub fn install() {
         log_line("crash log: the filter watcher thread did not start");
     }
     super::exit_hooks::install();
-    log_line("crash log: exception handlers installed");
+    super::stall_sampler::start();
+    log_line("crash log: exception handlers installed, and a watch on the game thread's ticks");
 }
 
 fn watch_unhandled_filter() {
@@ -228,11 +229,7 @@ fn capture_stack(info: *const EXCEPTION_POINTERS) -> Vec<StackFrame> {
     reason = "reads a thread's stack through ReadProcessMemory, which fails instead of faulting"
 )]
 pub(super) fn scan_stack(stack_pointer: u64) -> Vec<StackFrame> {
-    // SAFETY: a null name returns the handle of the process's executable.
-    let exe_base = unsafe { GetModuleHandleW(core::ptr::null()) } as usize as u64;
-    let own_base = module_at(capture_stack as *const () as usize as u64).map(|spot| spot.base);
-    let bases: Vec<u64> = [Some(exe_base), own_base].into_iter().flatten().collect();
-    let mut frames = Vec::new();
+    let mut words = Vec::with_capacity(CRASH_REPORT_STACK_SCAN_WORDS);
     for index in 0..CRASH_REPORT_STACK_SCAN_WORDS {
         let mut word = 0_u64;
         let mut read = 0_usize;
@@ -249,6 +246,22 @@ pub(super) fn scan_stack(stack_pointer: u64) -> Vec<StackFrame> {
         if ok == 0 {
             break;
         }
+        words.push(word);
+    }
+    frames_in_stack_words(&words)
+}
+
+#[expect(
+    unsafe_code,
+    reason = "asks the loader for the executable's base address"
+)]
+pub(super) fn frames_in_stack_words(words: &[u64]) -> Vec<StackFrame> {
+    // SAFETY: a null name returns the handle of the process's executable.
+    let exe_base = unsafe { GetModuleHandleW(core::ptr::null()) } as usize as u64;
+    let own_base = module_at(capture_stack as *const () as usize as u64).map(|spot| spot.base);
+    let bases: Vec<u64> = [Some(exe_base), own_base].into_iter().flatten().collect();
+    let mut frames = Vec::new();
+    for &word in words {
         if is_return_address_candidate(word, &bases, CRASH_REPORT_MODULE_SPAN_BYTES)
             && let Some(module) = module_at(word)
             && bases.contains(&module.base)

@@ -7,12 +7,15 @@ use replicant_proto::{Message, RejectReason};
 use crate::report::{ConnectionReport, PathKind, RttStats, judge};
 use crate::{
     INVALID_TICKET_TEXT, LauncherConfig, NetError, PROBE_MAX_SECONDS, PROBE_MIN_SECONDS,
-    PROBE_SAMPLE_INTERVAL, TransportFactory, WORKER_WAKE_INTERVAL,
+    PROBE_SAMPLE_INTERVAL, STORY_RULES, TransportFactory, WORKER_WAKE_INTERVAL,
 };
+
+const HOST_SLOT: u8 = 0;
 
 #[derive(Default)]
 struct Gathered {
     peer: Option<nc_net::PeerId>,
+    host_name: Option<String>,
     rejected: Option<RejectReason>,
     rtts: Vec<Duration>,
     direct: Option<bool>,
@@ -24,9 +27,14 @@ impl Gathered {
     fn absorb(&mut self, events: &[SessionEvent<Message>]) {
         for event in events {
             match event {
-                SessionEvent::PeerJoined { peer, .. } => self.peer = Some(*peer),
+                SessionEvent::PlayerJoined { slot, name, peer } => {
+                    self.peer = Some(*peer);
+                    if *slot == HOST_SLOT {
+                        self.host_name = Some(name.clone());
+                    }
+                }
                 SessionEvent::Rejected { reason } => self.rejected = Some(*reason),
-                SessionEvent::PeerLeft { .. } => self.peer = None,
+                SessionEvent::PlayerLeft { .. } => self.peer = None,
                 _ => {}
             }
         }
@@ -76,6 +84,8 @@ impl Gathered {
             path,
             rtt,
             loss_percent,
+            rejected: self.rejected,
+            host_name: self.host_name,
             verdict: judge(reachable, self.rejected, path, rtt, loss_percent).summary,
         }
     }
@@ -96,6 +106,7 @@ pub(crate) fn run_probe(
             role: Role::Guest,
             name: config.name.clone(),
             build: config.build,
+            rules: STORY_RULES,
         },
     );
     session

@@ -1,47 +1,52 @@
 use data_encoding::BASE32_NOPAD;
-use iroh::EndpointAddr;
+use iroh::{EndpointAddr, EndpointId};
 
-use crate::iroh_adapter::INVITE_PREFIX;
-use crate::transport::{Invite, MAX_INVITE_BYTES, NetError};
+use crate::iroh_adapter::{ADDRESS_INVITE_PREFIX, INVITE_PREFIX};
+use crate::transport::{Invite, NetError};
 
-pub(super) fn encode_invite(addr: &EndpointAddr) -> Result<Invite, NetError> {
-    let mut trimmed = EndpointAddr::new(addr.id);
-    if let Some(relay) = addr.relay_urls().next() {
-        trimmed = trimmed.with_relay_url(relay.clone());
-    }
-    let mut text = render(&trimmed)?;
-    for ip in addr.ip_addrs() {
-        let candidate = trimmed.clone().with_ip_addr(*ip);
-        match render(&candidate) {
-            Ok(longer) => {
-                trimmed = candidate;
-                text = longer;
-            }
-            Err(_) => break,
-        }
-    }
-    Invite::new(text)
+/// What a ticket names: the host's key, and for a ticket of the older form the addresses it carried, which
+/// are hints the lookup adds to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ReadInvite {
+    pub(super) hints: EndpointAddr,
+    pub(super) older_form: bool,
 }
 
-pub(super) fn decode_invite(invite: &Invite) -> Result<EndpointAddr, NetError> {
-    let body = invite
-        .as_str()
-        .strip_prefix(INVITE_PREFIX)
+pub(super) fn encode_invite(id: EndpointId) -> Result<Invite, NetError> {
+    let key = BASE32_NOPAD.encode(id.as_bytes()).to_ascii_lowercase();
+    Invite::new(format!("{INVITE_PREFIX}{key}"))
+}
+
+pub(super) fn decode_invite(invite: &Invite) -> Result<ReadInvite, NetError> {
+    let text = invite.as_str();
+    if let Some(body) = text.strip_prefix(INVITE_PREFIX) {
+        let key: [u8; 32] = base32(body)?
+            .try_into()
+            .map_err(|_| NetError::InvalidInvite)?;
+        let id = EndpointId::from_bytes(&key).map_err(|_| NetError::InvalidInvite)?;
+        return Ok(ReadInvite {
+            hints: EndpointAddr::new(id),
+            older_form: false,
+        });
+    }
+    let body = text
+        .strip_prefix(ADDRESS_INVITE_PREFIX)
         .ok_or(NetError::InvalidInvite)?;
-    let raw = BASE32_NOPAD
-        .decode(body.to_ascii_uppercase().as_bytes())
+    let hints = postcard::from_bytes::<EndpointAddr>(&base32(body)?)
         .map_err(|_| NetError::InvalidInvite)?;
-    postcard::from_bytes::<EndpointAddr>(&raw).map_err(|_| NetError::InvalidInvite)
+    Ok(ReadInvite {
+        hints,
+        older_form: true,
+    })
 }
 
-fn render(addr: &EndpointAddr) -> Result<String, NetError> {
-    let raw = postcard::to_stdvec(addr).map_err(|_| NetError::InvalidInvite)?;
-    let text = format!(
-        "{INVITE_PREFIX}{}",
-        BASE32_NOPAD.encode(&raw).to_ascii_lowercase()
-    );
-    if text.len() > MAX_INVITE_BYTES {
-        return Err(NetError::InvalidInvite);
-    }
-    Ok(text)
+/// Whether a ticket's text reads as a host this transport can look up, checked without connecting.
+pub fn invite_reads(text: &str) -> bool {
+    Invite::new(text.to_owned()).is_ok_and(|invite| decode_invite(&invite).is_ok())
+}
+
+fn base32(body: &str) -> Result<Vec<u8>, NetError> {
+    BASE32_NOPAD
+        .decode(body.to_ascii_uppercase().as_bytes())
+        .map_err(|_| NetError::InvalidInvite)
 }

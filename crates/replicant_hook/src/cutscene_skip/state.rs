@@ -56,17 +56,16 @@ pub(super) fn is_connected(view: &NetShared) -> bool {
 
 pub(crate) fn partner_in_cutscene(view: &NetShared) -> bool {
     is_connected(view)
-        && view.remote.as_ref().is_some_and(|remote| {
+        && view.partner_state().is_some_and(|remote| {
             remote.state.activity == PartnerActivity::InCutscene
                 && (remote.age().as_millis() as u64) < PARTNER_SNAPSHOT_STALE_MS
         })
 }
 
 pub(super) fn partner_name(view: &NetShared) -> String {
-    view.remote
-        .as_ref()
+    view.partner_state()
         .map(|remote| remote.name.clone())
-        .or_else(|| view.peer_name.clone())
+        .or_else(|| view.partner_name().map(str::to_owned))
         .unwrap_or_else(|| "your partner".to_owned())
 }
 

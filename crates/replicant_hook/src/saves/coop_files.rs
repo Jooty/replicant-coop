@@ -1,11 +1,10 @@
 use core::ffi::{CStr, c_char, c_void};
 use core::ptr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-use replicant_game::save_files::{
-    COOP_GAMEDATA_BACKUP_FILE_NAME, COOP_GAMEDATA_FILE_NAME, coop_save_name,
-};
+use replicant_game::save_files::{CoopSaveName, CoopSavePaths, coop_save_name};
 use replicant_game::story_progress::save_file_is_valid;
 
 use crate::build_gate::VerifiedBuild;
@@ -21,10 +20,11 @@ const WRITE_SUCCEEDED: u8 = 0;
 static ORIGINAL_READ_FILE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static ORIGINAL_WRITE_FILE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 static BACKED_UP_THIS_SESSION: AtomicBool = AtomicBool::new(false);
+static COOP_SAVE_NAME: OnceLock<CoopSaveName> = OnceLock::new();
 
 struct PreparedWrite {
     replacement: Option<Vec<u8>>,
-    folder: PathBuf,
+    paths: CoopSavePaths,
 }
 
 type ReadFile = unsafe extern "system" fn(*mut c_void, *const c_char, usize, *mut c_void) -> u64;
@@ -34,7 +34,12 @@ pub fn writes_are_redirected() -> bool {
     !ORIGINAL_WRITE_FILE.load(Ordering::Acquire).is_null()
 }
 
-pub fn install(build: VerifiedBuild, redirect_writes: bool) {
+pub fn install(build: VerifiedBuild, name: CoopSaveName, redirect_writes: bool) {
+    log_line(&format!("saves: the co-op file is {}", name.file_name()));
+    if COOP_SAVE_NAME.set(name).is_err() {
+        log_line("saves: the co-op file hooks were already installed");
+        return;
+    }
     let read_address = (build.module_base() + SAVE_IO_READ_FILE_RVA) as usize;
     #[expect(unsafe_code, reason = "hooks SaveIo::ReadFile by its address")]
     // SAFETY: the RVA starts SaveIo::ReadFile (io, name, arg, out) -> u64 in the verified build,
@@ -122,7 +127,11 @@ extern "system" fn write_file_detour(
         core::mem::transmute::<*mut c_void, WriteFile>(original)(io, coop_name, data, size)
     };
     if let Some(prepared) = &prepared {
-        crate::story_progress::finish_coop_save(&prepared.folder, result == WRITE_SUCCEEDED);
+        let succeeded = result == WRITE_SUCCEEDED;
+        crate::story_progress::finish_coop_save(&prepared.paths, succeeded);
+        if let Some(net) = crate::net::handle() {
+            net.tell_launcher_saved(succeeded);
+        }
     }
     result
 }
@@ -132,17 +141,14 @@ extern "system" fn write_file_detour(
     reason = "reads the save folder inside SaveIo and the buffer the game is writing"
 )]
 fn prepare_coop_write(io: *mut c_void, data: *const c_void, size: u32) -> Option<PreparedWrite> {
-    let folder = save_folder(io)?;
-    back_up_once_per_session(&folder);
+    let paths = COOP_SAVE_NAME.get()?.paths_in(&save_folder(io)?);
+    back_up_once_per_session(&paths);
     let length = usize::try_from(size).ok()?;
     // SAFETY: the game passes the buffer it is about to write and its length in bytes.
     let bytes = unsafe { core::slice::from_raw_parts(data.cast::<u8>(), length) };
-    let story_rewrite = crate::story_progress::rewrite_coop_save(&folder, bytes);
-    let replacement = crate::kaine::guard_coop_save(&folder, bytes, story_rewrite);
-    Some(PreparedWrite {
-        replacement,
-        folder,
-    })
+    let story_rewrite = crate::story_progress::rewrite_coop_save(&paths, bytes);
+    let replacement = crate::kaine::guard_coop_save(&paths.file, bytes, story_rewrite);
+    Some(PreparedWrite { replacement, paths })
 }
 
 #[expect(unsafe_code, reason = "reads the save folder inside SaveIo")]
@@ -168,7 +174,10 @@ fn log_read_target(io: *mut c_void, name: *const c_char) {
         log_line(&format!("saves: read of {game_name:?} with no save folder"));
         return;
     };
-    let coop_file = folder.join(COOP_GAMEDATA_FILE_NAME);
+    let Some(coop) = COOP_SAVE_NAME.get() else {
+        return;
+    };
+    let coop_file = coop.paths_in(&folder).file;
     let size = std::fs::metadata(&coop_file).map(|meta| meta.len());
     log_line(&format!(
         "saves: read of {game_name:?} in {}, co-op file {} ({})",
@@ -181,18 +190,18 @@ fn log_read_target(io: *mut c_void, name: *const c_char) {
     ));
 }
 
-fn back_up_once_per_session(folder: &Path) {
+fn back_up_once_per_session(paths: &CoopSavePaths) {
     if BACKED_UP_THIS_SESSION.load(Ordering::Acquire) {
         return;
     }
-    let Ok(current) = std::fs::read(folder.join(COOP_GAMEDATA_FILE_NAME)) else {
+    let Ok(current) = std::fs::read(&paths.file) else {
         return;
     };
     if !save_file_is_valid(&current) {
         log_line("saves: the co-op file is not valid, so it is not copied over the backup");
         return;
     }
-    match write_atomically(&folder.join(COOP_GAMEDATA_BACKUP_FILE_NAME), &current) {
+    match write_atomically(&paths.backup, &current) {
         Ok(()) => BACKED_UP_THIS_SESSION.store(true, Ordering::Release),
         Err(error) => log_line(&format!("saves: cannot back up the co-op file ({error})")),
     }
@@ -200,12 +209,15 @@ fn back_up_once_per_session(folder: &Path) {
 
 #[expect(unsafe_code, reason = "reads the file name the game passed in")]
 fn coop_name_or(name: *const c_char) -> *const c_char {
+    let Some(coop) = COOP_SAVE_NAME.get() else {
+        return name;
+    };
     if name.is_null() {
         return name;
     }
     // SAFETY: the game passes a NUL-terminated file name.
     let game_name = unsafe { CStr::from_ptr(name) };
-    match coop_save_name(game_name.to_bytes()) {
+    match coop_save_name(game_name.to_bytes(), coop) {
         Some(coop_name) => {
             log_line(&format!("saves: using the co-op file for {game_name:?}"));
             coop_name.as_ptr().cast()

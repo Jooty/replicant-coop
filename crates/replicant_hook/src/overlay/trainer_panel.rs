@@ -1,4 +1,6 @@
-use hudhook::imgui::{Condition, Ui};
+use hudhook::imgui::Ui;
+use nc_hook::menu_view::PANEL_COLUMN_LEFT_PX;
+use nc_hook::menu_view::parts::{line_buttons, panel_window, switch_line};
 use replicant_game::Replicant;
 
 use crate::actions::{self, Action};
@@ -24,11 +26,13 @@ impl TrainerPanel {
         if !*open {
             return;
         }
-        ui.window("trainer")
-            .opened(open)
-            .position([16.0, 332.0], Condition::FirstUseEver)
-            .size([340.0, 200.0], Condition::FirstUseEver)
-            .build(|| {
+        panel_window(
+            ui,
+            "trainer",
+            open,
+            [PANEL_COLUMN_LEFT_PX, 16.0],
+            [400.0, 300.0],
+            || {
                 let Some(game) = game else {
                     ui.text(match gate {
                         Ok(_) => "no game memory",
@@ -44,12 +48,13 @@ impl TrainerPanel {
                 if !self.status.is_empty() {
                     ui.text_wrapped(&self.status);
                 }
-            });
+            },
+        );
     }
 
     fn draw_toggles(&mut self, ui: &Ui, game: &Replicant<InProcessMemory>) {
         let mut invincible = game_hooks::invincibility_enabled();
-        if ui.checkbox("invincible (hp never drops)", &mut invincible) {
+        if switch_line(ui, "invincible (hp never drops)", &mut invincible) {
             self.queue(Action::SetInfiniteHealth {
                 enabled: invincible,
             });
@@ -58,13 +63,14 @@ impl TrainerPanel {
             ui.text_disabled("invincible: SetHp hook not installed");
         }
         let mut infinite_magic = game.infinite_magic_enabled().unwrap_or(false);
-        if ui.checkbox("infinite mp", &mut infinite_magic) {
+        if switch_line(ui, "infinite mp", &mut infinite_magic) {
             self.queue(Action::SetInfiniteMagic {
                 enabled: infinite_magic,
             });
         }
         let mut noclip = game_hooks::noclip_enabled();
-        if ui.checkbox(
+        if switch_line(
+            ui,
             "noclip (WASD, Space up, Ctrl down, Shift fast)",
             &mut noclip,
         ) {
@@ -76,19 +82,15 @@ impl TrainerPanel {
     }
 
     fn draw_buttons(&mut self, ui: &Ui) {
-        if ui.button("refill hp") {
-            self.queue(Action::RefillHealth);
-        }
-        ui.same_line();
-        if ui.button("refill mp") {
-            self.queue(Action::RefillMagic);
-        }
-        ui.same_line();
-        if ui.button(format!("+{GOLD_PER_BUTTON_PRESS} gold")) {
-            match Action::add_gold(GOLD_PER_BUTTON_PRESS) {
+        let gold = format!("+{GOLD_PER_BUTTON_PRESS} gold");
+        match line_buttons(ui, &["refill hp", "refill mp", &gold], &[]) {
+            Some(0) => self.queue(Action::RefillHealth),
+            Some(1) => self.queue(Action::RefillMagic),
+            Some(_) => match Action::add_gold(GOLD_PER_BUTTON_PRESS) {
                 Ok(action) => self.queue(action),
                 Err(error) => self.status = error.to_string(),
-            }
+            },
+            None => {}
         }
     }
 

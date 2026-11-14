@@ -1,4 +1,4 @@
-use replicant_proto::PartnerBody;
+use replicant_proto::GUEST_BODY;
 
 use crate::puppet::body_info;
 use crate::stay_together::FollowRole;
@@ -14,17 +14,13 @@ pub struct OwnSeedSwap {
 }
 
 /// The seed the guest's phase load should use instead of `returned_seed`, or None to keep it.
-/// Only the seeds the chosen body's row lists are replaced, so a seed the body already is, or one
+/// Only the seeds the swapped body's row lists are replaced, so a seed the body already is, or one
 /// a phase forces that the row does not name, stays as the game picked it.
-pub fn own_seed_swap(
-    role: FollowRole,
-    returned_seed: &str,
-    body: PartnerBody,
-) -> Option<OwnSeedSwap> {
-    if role != FollowRole::Guest || body == PartnerBody::Nier {
+pub fn own_seed_swap(role: FollowRole, returned_seed: &str) -> Option<OwnSeedSwap> {
+    if role != FollowRole::Guest {
         return None;
     }
-    let wanted = body_info(body);
+    let wanted = body_info(GUEST_BODY);
     let from = wanted
         .own_seed_replaces
         .iter()

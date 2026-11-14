@@ -5,14 +5,12 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use replicant_proto::PartnerBody;
-
 use crate::config::data_dir;
 use crate::install::end_process_group;
 use crate::second_copy::{
     CopyCommand, LOG_ENV, LOGS_FOLDER_NAME, ProtonSetup, SECOND_COPY_LOG_NAME, TOOL_MANIFEST_NAME,
-    body_environment, copy_command, copy_environment, proton_script_from_config_info,
-    required_tool_app_id, runtime_entry_point, steam_client_root,
+    copy_command, copy_environment, proton_script_from_config_info, required_tool_app_id,
+    runtime_entry_point, steam_client_root,
 };
 use crate::steam::{GameInstall, candidate_steam_roots, hide_console_window};
 
@@ -98,7 +96,6 @@ pub fn build_command(
     name: &str,
     boot_slot: Option<u8>,
     new_game: Option<(u8, &str)>,
-    body: Option<PartnerBody>,
     log_path: Option<&str>,
 ) -> Result<CopyCommand, String> {
     if !game.exe_path().is_file() {
@@ -110,9 +107,6 @@ pub fn build_command(
         Some(proton_setup(game)?)
     };
     let mut envs = copy_environment(link_port, name, boot_slot, new_game);
-    if let Some(body) = body {
-        envs.push(body_environment(body));
-    }
     if let Some(log_path) = log_path {
         envs.push((LOG_ENV.to_owned(), log_path.to_owned()));
     }

@@ -1,9 +1,8 @@
-use eframe::egui::{self, Ui};
+use eframe::egui::Ui;
 
-use crate::app::pages::lobby::{claim_mode, draw_lobby, other_page_note, session_open};
-use crate::app::style::{BAD, WARN};
+use crate::app::pages::campaign_lobby::{LobbyMenu, draw_campaign_lobby};
+use crate::app::pages::lobby::{claim_mode, other_page_note, session_open};
 use crate::app::{Launcher, NetForms};
-use crate::lobby::NameError;
 use crate::net::LOBBY_MODE_NEW_GAME;
 
 pub(super) fn draw_new_game(ui: &mut Ui, launcher: &mut Launcher, forms: &mut NetForms) {
@@ -11,21 +10,8 @@ pub(super) fn draw_new_game(ui: &mut Ui, launcher: &mut Launcher, forms: &mut Ne
         other_page_note(ui, launcher);
         return;
     }
-    ui.label("Your name in this co-op game");
-    let editable = !session_open(forms);
-    ui.add_enabled(
-        editable,
-        egui::TextEdit::singleline(&mut launcher.new_game_name).desired_width(f32::INFINITY),
-    );
-    match launcher.name_check() {
-        Ok(_) => {}
-        Err(NameError::Empty) => {
-            ui.colored_label(WARN, NameError::Empty.to_string());
-        }
-        Err(error) => {
-            ui.colored_label(BAD, error.to_string());
-        }
+    if !session_open(forms) {
+        return;
     }
-    ui.separator();
-    draw_lobby(ui, launcher, forms);
+    draw_campaign_lobby(ui, launcher, forms, LobbyMenu::Modes);
 }

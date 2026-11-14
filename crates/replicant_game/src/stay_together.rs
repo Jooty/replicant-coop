@@ -6,6 +6,7 @@ mod leash;
 mod phase_reads;
 mod placement;
 mod scene_end;
+mod script_jump;
 mod spot;
 mod teleport_check;
 
@@ -17,6 +18,7 @@ pub use leash::{Leash, distance_between};
 pub use phase_reads::{announced_target, local_phase_index};
 pub use placement::{PlacementCheck, PlacementVerdict, ReadBack, decide_placement};
 pub use scene_end::{SceneEndFacts, SceneEndOwed, SceneEndWatch};
+pub use script_jump::{JumpFacts, JumpPartner, JumpStep, ScriptJumpWatch};
 pub use spot::{FloorHit, SpotRefusal, WorldProbe, choose_spot};
 pub use teleport_check::{
     TELEPORT_ARRIVED_UNITS, TELEPORT_GIVE_UP_MS, TeleportCheck, check_teleport,
@@ -31,6 +33,9 @@ pub const MIN_LEASH_UNITS: f32 = 5.0;
 pub const MAX_LEASH_UNITS: f32 = 500.0;
 pub const ARRIVAL_PLACEMENT_TRIES: u32 = 20;
 pub const ARRIVAL_PLACEMENT_RETRY_EVERY_MS: u64 = 250;
+pub const SCRIPT_JUMP_MIN_UNITS: f32 = 15.0;
+pub const SCRIPT_JUMP_PARTNER_NEAR_UNITS: f32 = 15.0;
+pub const SCRIPT_JUMP_SETTLE_MS: u64 = 1500;
 pub const PARTNER_TIMEOUT_MS: u64 = 3000;
 pub const SPOT_RING_RADII: [f32; 3] = [1.5, 2.5, 3.5];
 pub const SPOT_ANGLE_STEPS: u32 = 8;

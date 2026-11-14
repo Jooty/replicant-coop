@@ -5,7 +5,9 @@ use replicant_proto::{BulletSprite, EnemyId};
 use crate::bullet_flights::{BULLET_STATE_RUNNING, SightedBullet, read_bullet};
 use crate::enemies::ActorHandle;
 use crate::enemy_bullets::{
-    MAX_SIGHTED_ENEMY_BULLETS, MAX_SIGHTED_ENEMY_SPRITE_BULLETS, NotCopyable, read_script_bullet,
+    LaserBeam, MAX_SIGHTED_ENEMY_BULLETS, MAX_SIGHTED_ENEMY_SPRITE_BULLETS,
+    MAX_UNCOPIED_SCRIPT_BULLETS_READ, NotCopyable, UncopiedWhy, read_laser_beam,
+    read_script_bullet, script_bullet_is_laser, shot_scale_growth, why_not_copied,
 };
 use crate::game::GameError;
 use crate::memory::GameMemory;
@@ -24,6 +26,10 @@ pub struct EnemyBullet {
     pub bullet: SightedBullet,
     /// Set for a bullet the game draws through its sprite batch; its look is then empty.
     pub sprite: Option<BulletSprite>,
+    /// Set for a script bullet whose effect the game stretches to another bullet each frame.
+    pub beam: Option<LaserBeam>,
+    /// See `EnemyBulletFlight::scale_growth_per_second`.
+    pub scale_growth_per_second: f32,
 }
 
 /// The running bullets of shared enemies in one scan, by what draws them. `normal`,
@@ -44,10 +50,19 @@ pub struct EnemyBulletCensus {
 pub struct EnemyBulletScan {
     pub bullets: Vec<EnemyBullet>,
     pub census: EnemyBulletCensus,
+    pub uncopied: Vec<UncopiedScriptBullet>,
+}
+
+/// A running script bullet of a shared enemy that the scan counted as having no effect to copy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UncopiedScriptBullet {
+    pub enemy: EnemyId,
+    pub why: UncopiedWhy,
+    pub laser: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BulletClass {
+pub(super) enum BulletClass {
     Normal,
     Script,
     Trace,
@@ -118,8 +133,16 @@ pub fn scan_enemy_bullets<M: GameMemory>(
         {
             continue;
         }
-        let Some((bullet, sprite)) = drawn_bullet(memory, actor, slot, class, &mut scan.census)
-        else {
+        let mut no_effect = false;
+        let drawn = drawn_bullet(memory, actor, slot, class, &mut scan.census, &mut no_effect);
+        let Some((bullet, sprite)) = drawn else {
+            if no_effect && scan.uncopied.len() < MAX_UNCOPIED_SCRIPT_BULLETS_READ {
+                scan.uncopied.push(UncopiedScriptBullet {
+                    enemy,
+                    why: why_not_copied(memory, actor),
+                    laser: script_bullet_is_laser(memory, actor),
+                });
+            }
             continue;
         };
         let (sighted, limit) = match sprite {
@@ -131,16 +154,26 @@ pub fn scan_enemy_bullets<M: GameMemory>(
             continue;
         }
         *sighted += 1;
+        let beam = match (class, sprite) {
+            (BulletClass::Script, None) => read_laser_beam(memory, actor),
+            _ => None,
+        };
+        let scale_growth_per_second = match class {
+            BulletClass::Normal => shot_scale_growth(memory, actor),
+            BulletClass::Script | BulletClass::Trace => 0.0,
+        };
         scan.bullets.push(EnemyBullet {
             enemy,
             bullet,
             sprite,
+            beam,
+            scale_growth_per_second,
         });
     }
     Ok(scan)
 }
 
-fn bullet_class<M: GameMemory>(memory: &M, actor: u64) -> Option<BulletClass> {
+pub(super) fn bullet_class<M: GameMemory>(memory: &M, actor: u64) -> Option<BulletClass> {
     let class = memory.read_u64(actor).ok()?;
     let base = memory.module_base();
     if class == base + u64::from(NORMAL_BULLET_VTABLE_RVA) {
@@ -160,6 +193,7 @@ fn drawn_bullet<M: GameMemory>(
     slot: u16,
     class: BulletClass,
     census: &mut EnemyBulletCensus,
+    no_effect: &mut bool,
 ) -> Option<(SightedBullet, Option<BulletSprite>)> {
     match class {
         BulletClass::Normal => {
@@ -184,6 +218,7 @@ fn drawn_bullet<M: GameMemory>(
             }
             Err(NotCopyable::NoEffect) => {
                 census.script_without_effect += 1;
+                *no_effect = true;
                 None
             }
         },

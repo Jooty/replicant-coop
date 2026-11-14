@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,7 +16,8 @@ pub(super) struct PeerSession {
     pub(super) outstanding_ping: Option<(u32, Instant)>,
     pub(super) rtt: Option<Duration>,
     pub(super) slot: u8,
-    pub(super) last_tick: Option<u32>,
+    pub(super) name: String,
+    pub(super) last_ticks: HashMap<u8, u32>,
     pub(super) pings_sent: u32,
     pub(super) pongs_received: u32,
 }
@@ -30,19 +32,20 @@ impl PeerSession {
             outstanding_ping: None,
             rtt: None,
             slot: 0,
-            last_tick: None,
+            name: String::new(),
+            last_ticks: HashMap::new(),
             pings_sent: 0,
             pongs_received: 0,
         }
     }
 
-    pub(super) fn accepts_tick(&mut self, tick: u32) -> bool {
-        let newer = match self.last_tick {
+    pub(super) fn accepts_tick(&mut self, sender: u8, tick: u32) -> bool {
+        let newer = match self.last_ticks.get(&sender) {
             None => true,
-            Some(last) => (tick.wrapping_sub(last) as i32) > 0,
+            Some(last) => (tick.wrapping_sub(*last) as i32) > 0,
         };
         if newer {
-            self.last_tick = Some(tick);
+            self.last_ticks.insert(sender, tick);
         }
         newer
     }

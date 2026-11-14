@@ -3,14 +3,16 @@ use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 
 use nc_wire::{
-    GameMessage, Hello, LinkPayload, Ping, Pong, Reject, RejectReason, Welcome, WireError, decode,
-    encode,
+    Envelope, GameMessage, Hello, LinkPayload, Member, MemberPing, Ping, Pong, Reject,
+    RejectReason, SessionRules, Welcome, WireError, decode, decode_enveloped, encode,
+    encode_enveloped,
 };
 
+use crate::progress::{LinkProgress, ProgressSink};
 use crate::session::peer::{PeerSession, Phase};
 use crate::session::{
-    HANDSHAKE_TIMEOUT, KEEPALIVE_INTERVAL, LeaveReason, PEER_TIMEOUT, REFUSAL_LINGER, Role,
-    SessionConfig, SessionEvent,
+    HANDSHAKE_TIMEOUT, KEEPALIVE_INTERVAL, LeaveReason, MEMBER_PING_LIST_INTERVAL, PEER_TIMEOUT,
+    REFUSAL_LINGER, Role, SessionConfig, SessionEvent,
 };
 use crate::transport::{
     Channel, DisconnectReason, Invite, NetError, PeerId, Transport, TransportEvent,
@@ -29,18 +31,31 @@ pub struct Session<T: Transport, M: GameMessage> {
     peers: HashMap<PeerId, PeerSession>,
     next_nonce: u32,
     local_slot: Option<u8>,
+    rules: SessionRules,
+    refused_peer_version: Option<u16>,
+    next_ping_list_at: Option<Instant>,
+    last_now: Instant,
+    pending_events: Vec<SessionEvent<M>>,
+    progress: Option<ProgressSink>,
     message: PhantomData<fn() -> M>,
 }
 
 impl<T: Transport, M: GameMessage> Session<T, M> {
     pub fn new(transport: T, config: SessionConfig) -> Self {
         let local_slot = (config.role == Role::Host).then_some(0);
+        let rules = clamped_rules::<M>(config.rules);
         Self {
             transport,
             config,
             peers: HashMap::new(),
             next_nonce: 0,
             local_slot,
+            rules,
+            refused_peer_version: None,
+            next_ping_list_at: None,
+            last_now: Instant::now(),
+            pending_events: Vec::new(),
+            progress: None,
             message: PhantomData,
         }
     }
@@ -49,12 +64,44 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
         &self.transport
     }
 
+    pub fn rules(&self) -> SessionRules {
+        self.rules
+    }
+
+    pub fn set_rules(&mut self, rules: SessionRules) {
+        if self.config.role != Role::Host {
+            return;
+        }
+        let rules = clamped_rules::<M>(rules);
+        self.rules = rules;
+        for peer in self.ready_peers() {
+            self.send_link(peer, LinkPayload::Rules(rules));
+        }
+    }
+
+    /// The name this side gives every player who joins from now on; players already in keep the one they
+    /// were told.
+    pub fn set_name(&mut self, name: &str) {
+        self.config.name = name.to_owned();
+    }
+
     pub fn local_slot(&self) -> Option<u8> {
         self.local_slot
     }
 
+    /// The protocol version the last player refused for a version mismatch asked with.
+    pub fn refused_peer_version(&self) -> Option<u16> {
+        self.refused_peer_version
+    }
+
     pub fn host(&mut self) -> Result<Invite, NetError> {
         self.transport.host()
+    }
+
+    /// Sends what the link and the handshake do from now on to `sink`.
+    pub fn report_progress(&mut self, sink: ProgressSink) {
+        self.transport.report_progress(sink.clone());
+        self.progress = Some(sink);
     }
 
     pub fn join(&mut self, invite: &Invite) -> Result<(), NetError> {
@@ -104,13 +151,60 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
         Ok(())
     }
 
+    pub fn send_ordered_to(&mut self, slot: u8, message: &M) -> Result<(), WireError> {
+        if message.ordered_tick().is_none() {
+            return Err(WireError::OutOfRange { field: "ordered" });
+        }
+        message.validate()?;
+        self.send_addressed(slot, message);
+        Ok(())
+    }
+
+    pub fn send_relayed_to(&mut self, slot: u8, message: &M) -> Result<(), WireError> {
+        if !message.is_relayed() {
+            return Err(WireError::OutOfRange { field: "relayed" });
+        }
+        message.validate()?;
+        self.send_addressed(slot, message);
+        Ok(())
+    }
+
     pub fn close(&mut self) {
         for peer in self.ready_peers() {
             self.send_link(peer, LinkPayload::Bye);
         }
     }
 
+    pub fn remove(&mut self, slot: u8) -> bool {
+        if self.config.role != Role::Host || slot == 0 {
+            return false;
+        }
+        let Some(peer) = self.ready_peer_in_slot(slot) else {
+            return false;
+        };
+        let reject = Reject {
+            reason: RejectReason::RemovedByHost,
+        };
+        self.send_link(peer, LinkPayload::Reject(reject));
+        if let Some(session) = self.peers.get_mut(&peer) {
+            session.phase = Phase::Refused {
+                drop_at: self.last_now + REFUSAL_LINGER,
+            };
+        }
+        for other in self.ready_peers() {
+            self.send_link(other, LinkPayload::MemberLeft { slot });
+        }
+        self.pending_events.push(SessionEvent::PlayerLeft {
+            slot,
+            reason: LeaveReason::RemovedByHost,
+            peer,
+        });
+        true
+    }
+
     pub fn poll(&mut self, now: Instant, out: &mut Vec<SessionEvent<M>>) {
+        self.last_now = now;
+        out.append(&mut self.pending_events);
         let mut incoming = Vec::new();
         self.transport.poll(&mut incoming);
         for event in incoming {
@@ -135,7 +229,10 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
                 build: self.config.build,
                 name: self.config.name.clone(),
             });
-            self.send_link(peer, hello);
+            self.send_bare(peer, hello);
+            self.tell_progress(LinkProgress::HelloSent {
+                protocol: M::PROTOCOL_VERSION,
+            });
         }
     }
 
@@ -167,14 +264,35 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
             return;
         }
         session.last_heard = now;
+        let peer_slot = session.slot;
+        if phase == Phase::Ready {
+            let Ok((envelope, message)) = decode_enveloped::<M>(payload) else {
+                self.drop_peer(peer, LeaveReason::ProtocolViolation, out);
+                return;
+            };
+            if let Some(to) = envelope.to
+                && Some(to) != self.local_slot
+            {
+                if self.config.role == Role::Host {
+                    self.forward_addressed(peer, peer_slot, to, message, out);
+                }
+                return;
+            }
+            // The host writes the sender itself, so a guest cannot speak for another slot.
+            let from = match self.config.role {
+                Role::Host => peer_slot,
+                Role::Guest => envelope.from,
+            };
+            if self.config.role == Role::Guest && !self.is_possible_sender(from) {
+                return;
+            }
+            self.on_ready_message(peer, from, message, now, out);
+            return;
+        }
         let Ok(message) = decode::<M>(payload) else {
             self.drop_peer(peer, LeaveReason::ProtocolViolation, out);
             return;
         };
-        if phase == Phase::Ready {
-            self.on_ready_message(peer, message, now, out);
-            return;
-        }
         match (phase, self.config.role, message.into_link()) {
             (Phase::Handshaking, Role::Host, Ok(LinkPayload::Hello(hello))) => {
                 self.on_hello(peer, &hello, now, out);
@@ -201,6 +319,7 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
         out: &mut Vec<SessionEvent<M>>,
     ) {
         let refusal = if hello.version != M::PROTOCOL_VERSION {
+            self.refused_peer_version = Some(hello.version);
             Some(RejectReason::VersionMismatch)
         } else if hello.build != self.config.build {
             Some(RejectReason::BuildMismatch)
@@ -223,7 +342,7 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
         now: Instant,
         out: &mut Vec<SessionEvent<M>>,
     ) {
-        self.send_link(peer, LinkPayload::Reject(Reject { reason }));
+        self.send_bare(peer, LinkPayload::Reject(Reject { reason }));
         if let Some(session) = self.peers.get_mut(&peer) {
             session.phase = Phase::Refused {
                 drop_at: now + REFUSAL_LINGER,
@@ -244,13 +363,52 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
             version: M::PROTOCOL_VERSION,
             slot,
             host_name: self.config.name.clone(),
+            rules: self.rules,
         });
-        self.send_link(peer, welcome);
-        out.push(SessionEvent::PeerJoined {
-            peer,
-            name: name.to_owned(),
+        self.send_bare(peer, welcome);
+        self.announce_members(peer, slot, name);
+        out.push(SessionEvent::PlayerJoined {
             slot,
+            name: name.to_owned(),
+            peer,
         });
+    }
+
+    fn announce_members(&mut self, joined: PeerId, slot: u8, name: &str) {
+        let mut others: Vec<(PeerId, u8, String)> = self
+            .peers
+            .iter()
+            .filter(|(peer, session)| **peer != joined && session.phase == Phase::Ready)
+            .map(|(peer, session)| (*peer, session.slot, session.name.clone()))
+            .collect();
+        others.sort_by_key(|(_, other_slot, _)| *other_slot);
+        if let Some(session) = self.peers.get_mut(&joined) {
+            session.name = name.to_owned();
+        }
+        for (peer, other_slot, other_name) in others {
+            self.send_link(
+                joined,
+                LinkPayload::Member(Member {
+                    slot: other_slot,
+                    name: other_name,
+                }),
+            );
+            self.send_link(
+                peer,
+                LinkPayload::Member(Member {
+                    slot,
+                    name: name.to_owned(),
+                }),
+            );
+        }
+    }
+
+    fn is_possible_sender(&self, from: u8) -> bool {
+        Some(from) != self.local_slot && from < M::MAX_PLAYERS
+    }
+
+    fn is_announceable_guest_slot(&self, slot: u8) -> bool {
+        slot != 0 && self.is_possible_sender(slot)
     }
 
     fn on_welcome(&mut self, peer: PeerId, welcome: &Welcome, out: &mut Vec<SessionEvent<M>>) {
@@ -267,16 +425,22 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
             session.slot = 0;
         }
         self.local_slot = Some(welcome.slot);
-        out.push(SessionEvent::PeerJoined {
-            peer,
-            name: welcome.host_name.clone(),
+        self.rules = welcome.rules;
+        self.tell_progress(LinkProgress::WelcomeRead {
+            seat: welcome.slot,
+            host_name: welcome.host_name.clone(),
+        });
+        out.push(SessionEvent::PlayerJoined {
             slot: 0,
+            name: welcome.host_name.clone(),
+            peer,
         });
     }
 
     fn on_ready_message(
         &mut self,
         peer: PeerId,
+        from: u8,
         message: M,
         now: Instant,
         out: &mut Vec<SessionEvent<M>>,
@@ -288,19 +452,73 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
             }
             Err(message) => message,
         };
-        if let Some(tick) = message.ordered_tick() {
-            let fresh = self
-                .peers
-                .get_mut(&peer)
-                .is_some_and(|session| session.accepts_tick(tick));
-            if fresh {
-                out.push(SessionEvent::PeerOrdered { peer, message });
+        match self.accept_game_message(peer, from, &message) {
+            Some(true) => {
+                if self.config.role == Role::Host && message.forwarded_to_other_guests() {
+                    self.send_from_to_other_guests(peer, from, &message);
+                }
+                out.push(SessionEvent::Message { from, message });
             }
-        } else if message.is_relayed() {
-            out.push(SessionEvent::PeerRelayed { peer, message });
-        } else {
-            self.drop_peer(peer, LeaveReason::ProtocolViolation, out);
+            Some(false) => {}
+            None => self.drop_peer(peer, LeaveReason::ProtocolViolation, out),
         }
+    }
+
+    fn accept_game_message(&mut self, peer: PeerId, from: u8, message: &M) -> Option<bool> {
+        if let Some(tick) = message.ordered_tick() {
+            Some(
+                self.peers
+                    .get_mut(&peer)
+                    .is_some_and(|session| session.accepts_tick(from, tick)),
+            )
+        } else {
+            message.is_relayed().then_some(true)
+        }
+    }
+
+    fn forward_addressed(
+        &mut self,
+        peer: PeerId,
+        from: u8,
+        to: u8,
+        message: M,
+        out: &mut Vec<SessionEvent<M>>,
+    ) {
+        if message.clone().into_link().is_ok() {
+            self.drop_peer(peer, LeaveReason::ProtocolViolation, out);
+            return;
+        }
+        match self.accept_game_message(peer, from, &message) {
+            Some(true) => {}
+            Some(false) => return,
+            None => {
+                self.drop_peer(peer, LeaveReason::ProtocolViolation, out);
+                return;
+            }
+        }
+        if to == from {
+            return;
+        }
+        if let Some(target) = self.ready_peer_in_slot(to) {
+            let envelope = Envelope { from, to: Some(to) };
+            self.send_enveloped(target, &envelope, &message);
+        }
+    }
+
+    fn send_from_to_other_guests(&mut self, sender: PeerId, from: u8, message: &M) {
+        let envelope = Envelope { from, to: None };
+        for target in self.ready_peers() {
+            if target != sender {
+                self.send_enveloped(target, &envelope, message);
+            }
+        }
+    }
+
+    fn ready_peer_in_slot(&self, slot: u8) -> Option<PeerId> {
+        self.peers
+            .iter()
+            .find(|(_, session)| session.phase == Phase::Ready && session.slot == slot)
+            .map(|(peer, _)| *peer)
     }
 
     fn on_ready_link(
@@ -325,13 +543,53 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
                 }
             }
             LinkPayload::Bye => self.drop_peer(peer, LeaveReason::Quit, out),
-            LinkPayload::Hello(_) | LinkPayload::Welcome(_) | LinkPayload::Reject(_) => {
+            LinkPayload::Reject(Reject {
+                reason: RejectReason::RemovedByHost,
+            }) if self.config.role == Role::Guest => {
+                self.drop_peer(peer, LeaveReason::RemovedByHost, out);
+            }
+            LinkPayload::MemberPings(pings) if self.config.role == Role::Guest => {
+                out.push(SessionEvent::MemberPings(pings));
+            }
+            LinkPayload::Rules(rules) if self.config.role == Role::Guest => {
+                self.rules = rules;
+                out.push(SessionEvent::RulesChanged(rules));
+            }
+            LinkPayload::Member(member)
+                if self.config.role == Role::Guest
+                    && self.is_announceable_guest_slot(member.slot) =>
+            {
+                out.push(SessionEvent::PlayerJoined {
+                    slot: member.slot,
+                    name: member.name,
+                    peer,
+                });
+            }
+            LinkPayload::MemberLeft { slot }
+                if self.config.role == Role::Guest && self.is_announceable_guest_slot(slot) =>
+            {
+                out.push(SessionEvent::PlayerLeft {
+                    slot,
+                    reason: LeaveReason::Quit,
+                    peer,
+                });
+            }
+            LinkPayload::Hello(_)
+            | LinkPayload::Welcome(_)
+            | LinkPayload::Reject(_)
+            | LinkPayload::Member(_)
+            | LinkPayload::MemberPings(_)
+            | LinkPayload::MemberLeft { .. }
+            | LinkPayload::Rules(_) => {
                 self.drop_peer(peer, LeaveReason::ProtocolViolation, out);
             }
         }
     }
 
     fn run_timers(&mut self, now: Instant, out: &mut Vec<SessionEvent<M>>) {
+        if self.config.role == Role::Host {
+            self.share_member_pings(now);
+        }
         let peers: Vec<PeerId> = self.peers.keys().copied().collect();
         for peer in peers {
             let Some(session) = self.peers.get(&peer) else {
@@ -359,6 +617,33 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
         }
     }
 
+    fn share_member_pings(&mut self, now: Instant) {
+        let due_at = *self
+            .next_ping_list_at
+            .get_or_insert(now + MEMBER_PING_LIST_INTERVAL);
+        if now < due_at {
+            return;
+        }
+        self.next_ping_list_at = Some(now + MEMBER_PING_LIST_INTERVAL);
+        let mut pings = vec![MemberPing { slot: 0, rtt_ms: 0 }];
+        pings.extend(
+            self.peers
+                .values()
+                .filter(|session| session.phase == Phase::Ready)
+                .filter_map(|session| {
+                    let rtt = session.rtt?;
+                    Some(MemberPing {
+                        slot: session.slot,
+                        rtt_ms: u32::try_from(rtt.as_millis()).unwrap_or(u32::MAX),
+                    })
+                }),
+        );
+        pings.sort_by_key(|ping| ping.slot);
+        for peer in self.ready_peers() {
+            self.send_link(peer, LinkPayload::MemberPings(pings.clone()));
+        }
+    }
+
     fn ping(&mut self, peer: PeerId, now: Instant) {
         self.next_nonce = self.next_nonce.wrapping_add(1);
         let nonce = self.next_nonce;
@@ -371,7 +656,7 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
     }
 
     fn free_slot(&self) -> Option<u8> {
-        (1..M::MAX_PLAYERS).find(|slot| {
+        (1..self.rules.max_players.min(M::MAX_PLAYERS)).find(|slot| {
             !self
                 .peers
                 .values()
@@ -388,8 +673,31 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
         if let Some(session) = self.peers.remove(&peer)
             && session.phase == Phase::Ready
         {
-            out.push(SessionEvent::PeerLeft { peer, reason });
+            if self.config.role == Role::Host {
+                for other in self.ready_peers() {
+                    self.send_link(other, LinkPayload::MemberLeft { slot: session.slot });
+                }
+            }
+            out.push(SessionEvent::PlayerLeft {
+                slot: session.slot,
+                reason,
+                peer,
+            });
         }
+    }
+
+    fn tell_progress(&self, progress: LinkProgress) {
+        if let Some(sink) = &self.progress {
+            sink.send(progress);
+        }
+    }
+
+    fn send_bare(&mut self, peer: PeerId, link: LinkPayload) {
+        let message = M::from_link(link);
+        let Ok(bytes) = encode(&message) else {
+            return;
+        };
+        let _ = self.transport.send(peer, channel_for(&message), &bytes);
     }
 
     fn send_link(&mut self, peer: PeerId, link: LinkPayload) {
@@ -397,14 +705,47 @@ impl<T: Transport, M: GameMessage> Session<T, M> {
     }
 
     fn send_to(&mut self, peer: PeerId, message: &M) {
-        let Ok(bytes) = encode(message) else {
+        let envelope = Envelope {
+            from: self.local_slot.unwrap_or(0),
+            to: None,
+        };
+        self.send_enveloped(peer, &envelope, message);
+    }
+
+    fn send_addressed(&mut self, slot: u8, message: &M) {
+        let from = self.local_slot.unwrap_or(0);
+        let envelope = Envelope {
+            from,
+            to: Some(slot),
+        };
+        let target = match self.config.role {
+            Role::Host => self.ready_peer_in_slot(slot),
+            Role::Guest => self.ready_peers().first().copied(),
+        };
+        if let Some(target) = target {
+            self.send_enveloped(target, &envelope, message);
+        }
+    }
+
+    fn send_enveloped(&mut self, peer: PeerId, envelope: &Envelope, message: &M) {
+        let Ok(bytes) = encode_enveloped(envelope, message) else {
             return;
         };
-        let channel = if message.is_latest_wins() {
-            Channel::UnreliableLatest
-        } else {
-            Channel::ReliableOrdered
-        };
-        let _ = self.transport.send(peer, channel, &bytes);
+        let _ = self.transport.send(peer, channel_for(message), &bytes);
+    }
+}
+
+fn clamped_rules<M: GameMessage>(rules: SessionRules) -> SessionRules {
+    SessionRules {
+        mode: rules.mode,
+        max_players: rules.max_players.clamp(2, M::MAX_PLAYERS.max(2)),
+    }
+}
+
+fn channel_for<M: GameMessage>(message: &M) -> Channel {
+    if message.is_latest_wins() {
+        Channel::UnreliableLatest
+    } else {
+        Channel::ReliableOrdered
     }
 }

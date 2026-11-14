@@ -12,6 +12,7 @@ use replicant_proto::{BULLET_STYLE_FLOATS, BULLET_TRANSFORM_FLOATS};
 
 use crate::build_gate::VerifiedBuild;
 use crate::diagnostics::log_line;
+use crate::kaine::play_for_partner;
 use crate::memory::InProcessMemory;
 
 const MAX_REFUSED_IDS_LOGGED: usize = 64;
@@ -47,7 +48,7 @@ pub(crate) fn create_effect(
     // SAFETY: the RVA starts the function (out handle, effect id, transform matrix, 0, fade,
     // fade, 0 -> out handle) in the verified build, as the bullet's own start code calls it; the
     // matrix is 16-byte aligned and outlives the call, and this runs on the game thread.
-    unsafe {
+    play_for_partner(|| unsafe {
         core::mem::transmute::<usize, CreateEffectById>(function)(
             &mut handle,
             id,
@@ -57,7 +58,7 @@ pub(crate) fn create_effect(
             fade,
             0,
         );
-    }
+    });
     let created = effect_instance_address(&memory, handle)
         .ok()
         .flatten()

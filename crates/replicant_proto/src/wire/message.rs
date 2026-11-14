@@ -1,21 +1,25 @@
-use nc_wire::{GameMessage, Hello, LinkPayload, Ping, Pong, Reject, Welcome};
+use nc_wire::{
+    GameMessage, Hello, LinkPayload, Member, MemberPing, Ping, Pong, Reject, SessionRules, Welcome,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::wire::{
-    AttackGaugeHit, AttackGaugeState, BlockHeld, BlockMoved, BodyPackName, BulletEffectPlay,
-    BulletFlight, CallbackFired, ChoiceHover, CombatEvent, ContainerOpened, CutsceneSkipAsk,
-    DesyncDigest, DialogueUpdate, DoorChange, DoorReport, EffectPlay, EffectStop, EndingRecords,
-    EnemyBodyGone, EnemyBulletFlight, EnemyCreation, EnemyDrop, EnemyGone, EnemyHit, EnemyKilled,
-    EnemySnapshot, EnemySpawned, EnemyWordDrop, FadeSync, FightPromptCount, FightRadioWaitEnded,
-    FightRequest, FightRequestAnswer, FightStreamEntry, FightTape, FightWindowMark, FollowPhase,
-    GameReadiness, GatherAnswer, GatherForScene, ItemCounts, ItemPickup, ItemTake, LobbyBody,
-    LobbyReady, LobbyStart, MAX_DISPLAY_NAME_BYTES, MAX_PLAYERS, MessageHandlerRan, MusicState,
-    NpcSnapshot, NpcTalk, PROTOCOL_VERSION, PartnerNotice, PausedHits, PlayerHit, PlayerSettings,
-    PlayerState, PowerModelEnded, PowerModelMotion, PowerModelState, PrologueLevel, SceneFollow,
-    ScriptMessage, ScriptRoll, SessionOptions, SharedFunctionRan, SkyAssets, SkyRecordChunk,
-    SkyState, SoundPlay, StoryArrayPart, StoryCall, StoryChanges, StoryDigest, StoryJump,
-    StoryRefused, StoryRequest, StoryWrite, TalkChoice, TeleportHere, TutorialPrompt,
-    VoiceCharacter, WireError, WorldEffectMove, WorldEffectPlay,
+    AttackGaugeAsk, AttackGaugeHit, AttackGaugeState, BlockHeld, BlockMoved, BodyPackName,
+    BombBlast, BulletEffectPlay, BulletFlight, CallbackFired, CampaignCard, CartRide, CartRun,
+    ChoiceHover, CombatEvent, ContainerOpened, CutsceneSkipAsk, DesyncDigest, DialogueUpdate,
+    DoorChange, DoorReport, EffectPlay, EffectStop, EndingRecords, EnemyBodyGone,
+    EnemyBulletFlight, EnemyCreation, EnemyDrop, EnemyGone, EnemyHit, EnemyIdList, EnemyKilled,
+    EnemySnapshot, EnemySpawned, EnemyWordDrop, FadeSync, FightCamera, FightCameraAim,
+    FightPromptCount, FightRadioWaitEnded, FightRequest, FightRequestAnswer, FightStreamEntry,
+    FightTape, FightWindowMark, FollowPhase, GameReadiness, GatherAnswer, GatherForScene,
+    ItemCounts, ItemPickup, ItemTake, LiftCall, LiftCallAnswer, LobbyBody, LobbyReady, LobbyStart,
+    MAX_DISPLAY_NAME_BYTES, MAX_PLAYERS, MessageHandlerRan, MusicState, NpcSnapshot, NpcTalk,
+    PROTOCOL_VERSION, PartnerNotice, PausedHits, PlayerHit, PlayerSettings, PlayerState,
+    PowerModelEnded, PowerModelMotion, PowerModelState, PrologueLevel, SceneFollow, ScriptMessage,
+    ScriptRoll, SeatPart, SeatReceipt, SessionOptions, SharedFunctionRan, ShotCue, SkyAssets,
+    SkyRecordChunk, SkyState, SoundPlay, StoryArrayPart, StoryCall, StoryChanges, StoryDigest,
+    StoryJump, StoryRefused, StoryRequest, StoryWrite, TalkChoice, TeleportHere, TutorialPrompt,
+    VoiceCharacter, WallBroken, WireError, WorldEffectMove, WorldEffectPlay,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -118,6 +122,26 @@ pub enum Message {
     GatherForScene(GatherForScene),
     GatherAnswer(GatherAnswer),
     ChoiceHover(ChoiceHover),
+    WallBroken(WallBroken),
+    BombBlast(BombBlast),
+    CartRide(CartRide),
+    LiftCall(LiftCall),
+    LiftCallAnswer(LiftCallAnswer),
+    FightCamera(FightCamera),
+    EnemyIdList(EnemyIdList),
+    Member(Member),
+    MemberLeft { slot: u8 },
+    Rules(SessionRules),
+    MemberPings(Vec<MemberPing>),
+    CampaignCard(CampaignCard),
+    SeatPart(SeatPart),
+    SeatReceipt(SeatReceipt),
+    GameSaved { succeeded: bool },
+    CartRun(CartRun),
+    FightCameraAim(FightCameraAim),
+    ShotCue(ShotCue),
+    AttackGaugeAsk(AttackGaugeAsk),
+    StandInTrapFired(CallbackFired),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,13 +251,36 @@ impl Message {
             Message::AttackGauge(_) => "AttackGauge",
             Message::AttackGaugeHit(_) => "AttackGaugeHit",
             Message::ChoiceHover(_) => "ChoiceHover",
+            Message::WallBroken(_) => "WallBroken",
+            Message::BombBlast(_) => "BombBlast",
+            Message::CartRide(_) => "CartRide",
+            Message::CartRun(_) => "CartRun",
+            Message::LiftCall(_) => "LiftCall",
+            Message::LiftCallAnswer(_) => "LiftCallAnswer",
+            Message::FightCamera(_) => "FightCamera",
+            Message::EnemyIdList(_) => "EnemyIdList",
+            Message::Member(_) => "Member",
+            Message::MemberLeft { .. } => "MemberLeft",
+            Message::Rules(_) => "Rules",
+            Message::MemberPings(_) => "MemberPings",
+            Message::CampaignCard(_) => "CampaignCard",
+            Message::SeatPart(_) => "SeatPart",
+            Message::SeatReceipt(_) => "SeatReceipt",
+            Message::GameSaved { .. } => "GameSaved",
+            Message::FightCameraAim(_) => "FightCameraAim",
+            Message::ShotCue(_) => "ShotCue",
+            Message::AttackGaugeAsk(_) => "AttackGaugeAsk",
+            Message::StandInTrapFired(_) => "StandInTrapFired",
         }
     }
 
     pub fn is_latest_wins(&self) -> bool {
         matches!(
             self,
-            Message::State(_) | Message::EnemySnapshot(_) | Message::NpcSnapshot(_)
+            Message::State(_)
+                | Message::EnemySnapshot(_)
+                | Message::EnemyIdList(_)
+                | Message::NpcSnapshot(_)
         )
     }
 
@@ -245,6 +292,7 @@ impl Message {
             Message::Combat(_)
                 | Message::FollowPhase(_)
                 | Message::EnemySnapshot(_)
+                | Message::EnemyIdList(_)
                 | Message::EnemySpawned(_)
                 | Message::EnemyCreation(_)
                 | Message::EnemyGone(_)
@@ -329,7 +377,21 @@ impl Message {
                 | Message::FightPromptCount(_)
                 | Message::AttackGauge(_)
                 | Message::AttackGaugeHit(_)
+                | Message::AttackGaugeAsk(_)
                 | Message::ChoiceHover(_)
+                | Message::WallBroken(_)
+                | Message::BombBlast(_)
+                | Message::CartRide(_)
+                | Message::CartRun(_)
+                | Message::LiftCall(_)
+                | Message::LiftCallAnswer(_)
+                | Message::FightCamera(_)
+                | Message::CampaignCard(_)
+                | Message::SeatPart(_)
+                | Message::SeatReceipt(_)
+                | Message::FightCameraAim(_)
+                | Message::ShotCue(_)
+                | Message::StandInTrapFired(_)
         )
     }
 
@@ -337,14 +399,14 @@ impl Message {
         match self {
             Message::Hello(hello) => validate_display_name(&hello.name),
             Message::Welcome(welcome) => {
-                if welcome.slot >= MAX_PLAYERS {
-                    return Err(WireError::OutOfRange { field: "slot" });
-                }
+                validate_slot(welcome.slot)?;
+                validate_rules(&welcome.rules)?;
                 validate_display_name(&welcome.host_name)
             }
             Message::State(state) => state.validate(),
             Message::FollowPhase(follow) => follow.validate(),
             Message::EnemySnapshot(snapshot) => snapshot.validate(),
+            Message::EnemyIdList(list) => list.validate(),
             Message::EnemySpawned(spawned) => spawned.enemy.validate(),
             Message::EnemyCreation(creation) => creation.validate(),
             Message::EnemyGone(gone) => gone.id.validate(),
@@ -389,9 +451,9 @@ impl Message {
             Message::PowerModel(power) => power.validate(),
             Message::BulletFlight(flight) => flight.validate(),
             Message::SceneFollow(follow) => follow.validate(),
-            Message::CallbackFired(fired) | Message::WatchedCallbackFired(fired) => {
-                fired.validate()
-            }
+            Message::CallbackFired(fired)
+            | Message::WatchedCallbackFired(fired)
+            | Message::StandInTrapFired(fired) => fired.validate(),
             Message::Desync(digest) => digest.validate(),
             Message::EnemyBulletFlight(flight) => flight.validate(),
             Message::PausedHits(hits) => hits.validate(),
@@ -421,6 +483,26 @@ impl Message {
             Message::AttackGauge(state) => state.validate(),
             Message::AttackGaugeHit(hit) => hit.validate(),
             Message::ChoiceHover(hover) => hover.validate(),
+            Message::WallBroken(wall) => wall.validate(),
+            Message::BombBlast(blast) => blast.validate(),
+            Message::CartRide(ride) => ride.validate(),
+            Message::CartRun(run) => run.validate(),
+            Message::LiftCall(call) => call.validate(),
+            Message::LiftCallAnswer(answer) => answer.validate(),
+            Message::FightCamera(camera) => camera.validate(),
+            Message::Member(member) => {
+                validate_slot(member.slot)?;
+                validate_display_name(&member.name)
+            }
+            Message::MemberLeft { slot } => validate_slot(*slot),
+            Message::Rules(rules) => validate_rules(rules),
+            Message::MemberPings(pings) => validate_member_pings(pings),
+            Message::CampaignCard(card) => card.validate(),
+            Message::SeatPart(part) => part.validate(),
+            Message::SeatReceipt(_) | Message::GameSaved { .. } => Ok(()),
+            Message::FightCameraAim(aim) => aim.validate(),
+            Message::ShotCue(cue) => cue.validate(),
+            Message::AttackGaugeAsk(ask) => ask.validate(),
             Message::Reject(_)
             | Message::GatherAnswer(_)
             | Message::Ping(_)
@@ -440,6 +522,29 @@ impl Message {
             | Message::StoryDigest(_) => Ok(()),
         }
     }
+}
+
+fn validate_member_pings(pings: &[MemberPing]) -> Result<(), WireError> {
+    if pings.len() > usize::from(MAX_PLAYERS) {
+        return Err(WireError::OutOfRange { field: "pings" });
+    }
+    pings.iter().try_for_each(|ping| validate_slot(ping.slot))
+}
+
+fn validate_slot(slot: u8) -> Result<(), WireError> {
+    if slot >= MAX_PLAYERS {
+        return Err(WireError::OutOfRange { field: "slot" });
+    }
+    Ok(())
+}
+
+fn validate_rules(rules: &SessionRules) -> Result<(), WireError> {
+    if !(2..=MAX_PLAYERS).contains(&rules.max_players) {
+        return Err(WireError::OutOfRange {
+            field: "max_players",
+        });
+    }
+    Ok(())
 }
 
 fn validate_display_name(name: &str) -> Result<(), WireError> {
@@ -462,6 +567,10 @@ impl GameMessage for Message {
             LinkPayload::Ping(ping) => Message::Ping(ping),
             LinkPayload::Pong(pong) => Message::Pong(pong),
             LinkPayload::Bye => Message::Bye,
+            LinkPayload::Member(member) => Message::Member(member),
+            LinkPayload::MemberLeft { slot } => Message::MemberLeft { slot },
+            LinkPayload::Rules(rules) => Message::Rules(rules),
+            LinkPayload::MemberPings(pings) => Message::MemberPings(pings),
         }
     }
 
@@ -473,6 +582,10 @@ impl GameMessage for Message {
             Message::Ping(ping) => Ok(LinkPayload::Ping(ping)),
             Message::Pong(pong) => Ok(LinkPayload::Pong(pong)),
             Message::Bye => Ok(LinkPayload::Bye),
+            Message::Member(member) => Ok(LinkPayload::Member(member)),
+            Message::MemberLeft { slot } => Ok(LinkPayload::MemberLeft { slot }),
+            Message::Rules(rules) => Ok(LinkPayload::Rules(rules)),
+            Message::MemberPings(pings) => Ok(LinkPayload::MemberPings(pings)),
             other => Err(other),
         }
     }

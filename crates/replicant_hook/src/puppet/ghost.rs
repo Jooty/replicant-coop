@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
+use nc_hook::stall_watch::in_game_thread_step;
 use replicant_game::fix_buttons::TakeOnce;
 use replicant_game::puppet::{GhostBook, LayerMotion, PuppetPose, SpawnResult, body_info};
 use replicant_game::{PhaseEntry, Position, Replicant};
@@ -95,8 +96,21 @@ pub fn tick_ghost(build: &VerifiedBuild) {
     }
     let remote_body = exchange_bodies();
     let partner_has_book = exchange_book_presence(build);
-    crate::kaine::hide_partner_kaine(build, remote_body);
-    crate::kaine::match_kaine_stats_to_protagonist(build);
+    in_game_thread_step("ghost tick: companion hide", || {
+        crate::kaine::hide_partner_kaine(build, remote_body);
+    });
+    in_game_thread_step("ghost tick: companion off", || {
+        crate::kaine::keep_companion_off(build, wish != GhostWish::NotConnected);
+    });
+    in_game_thread_step("ghost tick: stand-in", || {
+        crate::kaine::tick_stand_in(build)
+    });
+    in_game_thread_step("ghost tick: scene stand-in", || {
+        crate::kaine::tick_scene_stand_in(build);
+    });
+    in_game_thread_step("ghost tick: companion stats", || {
+        crate::kaine::match_kaine_stats_to_her_level(build);
+    });
     let Some((received_at, state)) = remote.filter(|_| wish == GhostWish::Wanted) else {
         retire(build, &mut ghost);
         publish_status(wish, &ghost);
@@ -247,7 +261,7 @@ fn wanted_remote(build: &VerifiedBuild) -> (GhostWish, Option<(Instant, PlayerSt
         .ok()
         .and_then(|name| PhaseEntry::index_of(&name))
         .and_then(|index| u16::try_from(index).ok());
-    let remote = view.remote;
+    let remote = view.partner_state().cloned();
     let wish = decide_ghost(
         ghost_enabled(),
         &view.state,

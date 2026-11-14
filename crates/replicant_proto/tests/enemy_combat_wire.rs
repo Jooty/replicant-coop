@@ -1,7 +1,7 @@
 use replicant_proto::{
     ENEMY_GROUP_COUNT, EnemyBodyGone, EnemyDrop, EnemyHit, EnemyId, EnemyKilled, EnemyWordDrop,
-    MAX_HIT_DAMAGE, MAX_ITEM_COUNT, MAX_MESSAGE_BYTES, MAX_WORD_ID, Message, PlayerHit, decode,
-    encode,
+    MAX_HIT_DAMAGE, MAX_HIT_PUSH_STRENGTH, MAX_ITEM_COUNT, MAX_MESSAGE_BYTES, MAX_WORD_ID, Message,
+    PlayerHit, decode, encode,
 };
 
 fn id() -> EnemyId {
@@ -32,6 +32,8 @@ fn player_hit() -> PlayerHit {
         flags: 0x2001000,
         attack_kind: 3,
         hit_id: 9,
+        push: 0.0,
+        direction: [0.0; 3],
     }
 }
 
@@ -163,4 +165,33 @@ fn a_body_gone_survives_a_round_trip_and_needs_a_group_in_range() {
         ..gone
     };
     assert!(encode(&Message::EnemyBodyGone(bad)).is_err());
+}
+
+#[test]
+fn a_hit_on_the_guest_carries_the_record_s_push_and_direction() {
+    // The run's wide shot of 100:1: flags 0x800103, so the guest's game picks reaction kind 5.
+    let thrown = PlayerHit {
+        flags: 0x80_0103,
+        push: 3.5,
+        direction: [0.6, 0.0, -0.8],
+        ..player_hit()
+    };
+    let bytes = encode(&Message::PlayerHit(thrown)).expect("valid message encodes");
+    assert_eq!(decode(&bytes).expect("decodes"), Message::PlayerHit(thrown));
+    for bad in [
+        PlayerHit {
+            push: -1.0,
+            ..thrown
+        },
+        PlayerHit {
+            push: MAX_HIT_PUSH_STRENGTH * 2.0,
+            ..thrown
+        },
+        PlayerHit {
+            direction: [f32::NAN, 0.0, 0.0],
+            ..thrown
+        },
+    ] {
+        assert!(encode(&Message::PlayerHit(bad)).is_err());
+    }
 }

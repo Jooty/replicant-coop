@@ -1,14 +1,27 @@
 use eframe::egui::Color32;
+use nc_ui_style as shared;
 
-pub const BACKGROUND: Color32 = Color32::from_rgb(0x1a, 0x1a, 0x18);
-pub const SURFACE: Color32 = Color32::from_rgb(0x23, 0x23, 0x21);
-pub const TRACK: Color32 = Color32::from_rgb(0x2d, 0x2d, 0x2a);
-pub const LINE: Color32 = Color32::from_rgb(0x44, 0x42, 0x3b);
-pub const TEXT: Color32 = Color32::from_rgb(0xd9, 0xd5, 0xc9);
-pub const ACCENT: Color32 = Color32::from_rgb(0xa4, 0xad, 0xb8);
-pub const ACTIVE_FILL: Color32 = Color32::from_rgba_premultiplied(0x1f, 0x21, 0x23, 0x30);
-pub const GOOD: Color32 = Color32::from_rgb(0x7f, 0xa0, 0x7b);
-pub const WARN: Color32 = Color32::from_rgb(0xc2, 0xaa, 0x68);
-pub const BAD: Color32 = Color32::from_rgb(0xb8, 0x70, 0x6a);
-pub const MUTED: Color32 = Color32::from_rgb(0x98, 0x94, 0x8a);
-pub const INFO: Color32 = Color32::from_rgb(0x7f, 0x95, 0xaa);
+pub const GROUND: Color32 = from_shared(shared::GROUND);
+pub const BAND: Color32 = from_shared(shared::BAND);
+pub const INK: Color32 = from_shared(shared::INK);
+pub const INK_MUTED: Color32 = from_shared(shared::INK_MUTED);
+pub const INK_UNAVAILABLE: Color32 = from_shared(shared::INK_UNAVAILABLE);
+pub const INK_ON_SAND: Color32 = from_shared(shared::INK_ON_SAND);
+pub const INK_MUTED_ON_SAND: Color32 = from_shared(shared::INK_MUTED_ON_SAND);
+pub const SAND: Color32 = from_shared(shared::SAND);
+pub const HARD_SHADOW: Color32 = from_shared(shared::HARD_SHADOW);
+pub const HAIRLINE: Color32 = from_shared(shared::HAIRLINE);
+pub const HAIRLINE_STRONG: Color32 = from_shared(shared::HAIRLINE_STRONG);
+pub const GRID_LINE: Color32 = from_shared(shared::GRID_LINE);
+pub const HATCH_LINE: Color32 = from_shared(shared::HATCH_LINE);
+pub const HATCH_LINE_DENSE: Color32 = from_shared(shared::HATCH_LINE_DENSE);
+pub const HOVER_WASH: Color32 = from_shared(shared::HOVER_WASH);
+pub const READY: Color32 = from_shared(shared::READY);
+pub const NOT_READY: Color32 = from_shared(shared::NOT_READY);
+pub const READY_ON_SAND: Color32 = from_shared(shared::READY_ON_SAND);
+pub const NOT_READY_ON_SAND: Color32 = from_shared(shared::NOT_READY_ON_SAND);
+pub const SCAN_LINE: Color32 = from_shared(shared::SCAN_LINE);
+
+pub const fn from_shared(rgba: [u8; 4]) -> Color32 {
+    Color32::from_rgba_unmultiplied_const(rgba[0], rgba[1], rgba[2], rgba[3])
+}

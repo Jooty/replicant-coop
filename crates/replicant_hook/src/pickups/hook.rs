@@ -132,7 +132,7 @@ fn report_pickup(item_id: i32, added: i64, caller_rva: u32) {
         pickup.source,
         is_key_item(item_id)
     ));
-    if let Some(name) = view.peer_name
+    if let Some(name) = view.partner_name().map(str::to_owned)
         && let Some(notice) = local_key_item_notice(&name, pickup)
     {
         post_event(&notice);

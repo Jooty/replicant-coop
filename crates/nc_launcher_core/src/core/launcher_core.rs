@@ -1,17 +1,20 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
-use nc_net::{LocalLinkTransport, Transport};
-use replicant_proto::{LobbyReady, PartnerBody, PlayerSettings, SessionOptions};
+use nc_net::{LocalLinkTransport, ProgressBoard, ProgressEntry, Transport};
+use nc_wire::SessionRules;
+use replicant_proto::{CampaignCard, LobbyReady, PartnerBody, PlayerSettings, SessionOptions};
 
 use crate::bridge::Bridge;
 use crate::probe::run_probe;
 use crate::report::judge_rejection_text;
 use crate::{
     COMMAND_REPLY_TIMEOUT, ConnectionReport, ConnectionState, LauncherConfig, LauncherEvent,
-    LauncherNet, LinkStatus, NetError, NetState, NetStatus, TransportFactory, WORKER_WAKE_INTERVAL,
+    LauncherNet, LinkStatus, NetError, NetState, NetStatus, SessionEndCause, TransportFactory,
+    WORKER_WAKE_INTERVAL,
 };
 
 enum Command {
@@ -23,12 +26,21 @@ enum Command {
         reply: Sender<Result<(), NetError>>,
     },
     Leave,
+    GiveUp,
     SetOptions(SessionOptions),
+    SetRules(SessionRules),
     SetSettings(PlayerSettings),
     SetName(String),
     LobbyReady(LobbyReady),
     LobbyBody(PartnerBody),
     StartLobby(u8),
+    CampaignCard(CampaignCard),
+    SendSeat {
+        slot: u8,
+        seat: Vec<u8>,
+        transfer: u32,
+    },
+    RemoveMember(u8),
     QuitGame,
 }
 
@@ -40,6 +52,8 @@ pub struct LauncherCore {
     config: LauncherConfig,
     link_port: u16,
     worker: Mutex<Option<JoinHandle<()>>>,
+    next_transfer: AtomicU32,
+    progress: ProgressBoard,
 }
 
 impl LauncherCore {
@@ -54,12 +68,14 @@ impl LauncherCore {
         }));
         let (events_tx, events) = channel();
         let (commands, inbox) = channel();
+        let progress = ProgressBoard::default();
         let mut bridge = Bridge::new(
             link,
             Arc::clone(&factory),
             config.clone(),
             Arc::clone(&status),
             events_tx,
+            progress.clone(),
         );
         let worker = thread::Builder::new()
             .name("rc-launcher-net".to_owned())
@@ -73,6 +89,8 @@ impl LauncherCore {
             config,
             link_port,
             worker: Mutex::new(Some(worker)),
+            next_transfer: AtomicU32::new(1),
+            progress,
         })
     }
 
@@ -82,6 +100,14 @@ impl LauncherCore {
 
     pub fn set_player_name(&self, name: &str) {
         let _ = self.send(Command::SetName(name.to_owned()));
+    }
+
+    pub fn set_rules(&self, rules: SessionRules) {
+        let _ = self.send(Command::SetRules(rules));
+    }
+
+    pub fn remove_member(&self, slot: u8) {
+        let _ = self.send(Command::RemoveMember(slot));
     }
 
     pub fn link_status(&self) -> LinkStatus {
@@ -138,6 +164,10 @@ impl LauncherNet for LauncherCore {
         let _ = self.send(Command::Leave);
     }
 
+    fn give_up(&self) {
+        let _ = self.send(Command::GiveUp);
+    }
+
     fn set_session_options(&self, options: SessionOptions) {
         let _ = self.send(Command::SetOptions(options));
     }
@@ -158,8 +188,31 @@ impl LauncherNet for LauncherCore {
         let _ = self.send(Command::StartLobby(mode));
     }
 
+    fn set_rules(&self, rules: SessionRules) {
+        LauncherCore::set_rules(self, rules);
+    }
+
+    fn send_campaign_card(&self, card: CampaignCard) {
+        let _ = self.send(Command::CampaignCard(card));
+    }
+
+    fn send_seat(&self, slot: u8, seat: Vec<u8>) -> Option<u32> {
+        let transfer = self.next_transfer.fetch_add(1, Ordering::Relaxed);
+        self.send(Command::SendSeat {
+            slot,
+            seat,
+            transfer,
+        })
+        .ok()?;
+        Some(transfer)
+    }
+
     fn ask_game_to_quit(&self) {
         let _ = self.send(Command::QuitGame);
+    }
+
+    fn progress(&self) -> Vec<ProgressEntry> {
+        self.progress.entries()
     }
 
     fn status(&self) -> NetStatus {
@@ -171,7 +224,10 @@ impl LauncherNet for LauncherCore {
             },
             ConnectionState::Joining => NetState::Joining,
             ConnectionState::Connected => NetState::Connected {
-                peer_name: link.peer_name.unwrap_or_default(),
+                peer_name: link
+                    .partner()
+                    .map(|partner| partner.name.clone())
+                    .unwrap_or_default(),
             },
             ConnectionState::Rejected(reason) => {
                 NetState::Failed(judge_rejection_text(reason).to_owned())
@@ -211,13 +267,22 @@ fn run_worker(bridge: &mut Bridge, inbox: &Receiver<Command>) {
             Ok(Command::Join { ticket, reply }) => {
                 let _ = reply.send(bridge.join(&ticket));
             }
-            Ok(Command::Leave) => bridge.stop(),
+            Ok(Command::Leave) => bridge.end_session(SessionEndCause::PlayerLeft),
+            Ok(Command::GiveUp) => bridge.end_session(SessionEndCause::GaveUp),
             Ok(Command::SetOptions(options)) => bridge.set_options(options),
+            Ok(Command::SetRules(rules)) => bridge.set_rules(rules),
             Ok(Command::SetSettings(settings)) => bridge.set_settings(settings),
             Ok(Command::SetName(name)) => bridge.set_name(&name),
             Ok(Command::LobbyReady(ready)) => bridge.set_lobby_ready(ready),
             Ok(Command::LobbyBody(body)) => bridge.set_lobby_body(body),
             Ok(Command::StartLobby(mode)) => bridge.start_lobby(mode),
+            Ok(Command::CampaignCard(card)) => bridge.set_campaign_card(card),
+            Ok(Command::SendSeat {
+                slot,
+                seat,
+                transfer,
+            }) => bridge.send_seat(slot, seat, transfer),
+            Ok(Command::RemoveMember(slot)) => bridge.remove_member(slot),
             Ok(Command::QuitGame) => bridge.quit_game(),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {

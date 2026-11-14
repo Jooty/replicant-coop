@@ -5,7 +5,7 @@ use replicant_game::fix_buttons::TakeOnce;
 use replicant_game::stay_together::FollowRole;
 use replicant_game::story_progress::{
     FeedSend, SAME_STORY_REQUEST_IGNORED_MS, STORY_DIGEST_INTERVAL_MS,
-    STORY_MESSAGES_KEPT_BEFORE_ARMING, STORY_REQUEST_RETRY_MS, StoryFeed, StoryMirror,
+    STORY_MESSAGES_KEPT_BEFORE_ARMING, STORY_REQUEST_RETRY_MS, StoryArrays, StoryFeed, StoryMirror,
 };
 use replicant_game::story_writes::STORY_WRITE_HOLD_MS;
 use replicant_proto::{
@@ -177,6 +177,16 @@ fn host_tick(
     }
 }
 
+/// Reads the guest's copy of the host's story state, once the whole of it has arrived.
+pub(crate) fn with_host_story<R>(read: impl FnOnce(&StoryArrays) -> R) -> Option<R> {
+    GUEST
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .mirror
+        .host()
+        .map(read)
+}
+
 fn guest_tick(
     build: &VerifiedBuild,
     net: &NetThread,
@@ -312,7 +322,7 @@ fn guest_tick(
 }
 
 fn same_phase(view: &NetShared) -> bool {
-    match (&view.local, &view.remote) {
+    match (&view.local, view.partner_state()) {
         (Some(local), Some(remote)) => local.phase == remote.state.phase,
         _ => false,
     }

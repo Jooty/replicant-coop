@@ -14,9 +14,10 @@ use replicant_game::effects::{
     WorldEffectTrail, admit_pending, census_log_line, classify_effect_source, classify_push_caller,
     effect_is_finished, hit_spark_log_line, look_attempt, power_actor_class, push_is_sent,
     read_actor_position, read_effect, read_effect_look, read_effect_transform, read_request_name,
-    read_request_transform, read_sound, read_world_effect, spawn_is_sent, within_after_hit_window,
-    within_hit_radius,
+    read_request_transform, read_sound, read_world_effect, spawn_is_drawn_by_shot_sync,
+    spawn_is_sent, within_after_hit_window, within_hit_radius,
 };
+use replicant_game::kaine::SpellLook;
 use replicant_game::marker::read_world_flags;
 use replicant_game::offsets::{
     ACTOR_PLAY_EFFECT_FUNCTION_RVA, ACTOR_PLAY_SOUND_FUNCTION_RVA,
@@ -38,6 +39,9 @@ use crate::effects::report::{
 use crate::effects::sound_probe;
 use crate::enemies::applying_remote;
 use crate::game_hooks::hook_address;
+use crate::kaine::{
+    after_spawn, note_shot_slot_not_resent, sent_effect_name, spawn_look, spawn_size,
+};
 use crate::memory::InProcessMemory;
 use crate::net::{self, net_clock_ms};
 use crate::puppet::is_puppet_actor;
@@ -401,17 +405,49 @@ extern "system" fn spawn_by_name_detour(
     if original.is_null() {
         return handle;
     }
-    // SAFETY: the trampoline continues into the original function, which has this signature.
+    let build = HOOKED_BUILD.get();
+    let look = build.map_or(SpellLook::AsItIs, |build| {
+        let address = name as usize as u64;
+        panic::catch_unwind(|| spawn_look(build, address)).unwrap_or(SpellLook::AsItIs)
+    });
+    let spawned_name = match look {
+        SpellLook::Hers(pair) => pair.hers.as_ptr().cast::<u8>(),
+        SpellLook::Tinted | SpellLook::AsItIs => name,
+    };
+    let size = panic::catch_unwind(|| spawn_size(look)).unwrap_or(1.0);
+    let spawned_scale = scale * size;
+    // SAFETY: the trampoline continues into the original function, which has this signature;
+    // her name is a static NUL-terminated string, which the function only hashes.
     let result = unsafe {
         core::mem::transmute::<*mut c_void, SpawnByName>(original)(
-            handle, name, matrix, scale, fifth, sixth, seventh, eighth,
+            handle,
+            spawned_name,
+            matrix,
+            spawned_scale,
+            fifth,
+            sixth,
+            seventh,
+            eighth,
         )
     };
     let outermost = NESTED_EFFECT_CALLS.with(|depth| depth.get() == 0);
-    if spawn_is_sent(outermost, hit_related_spawn()) && SENDING.load(Ordering::Relaxed) {
+    if let Some(build) = build
+        && look != SpellLook::AsItIs
+        && !handle.is_null()
+    {
+        // SAFETY: the game wrote the new handle through this out pointer just now.
+        let made = unsafe { handle.read() };
+        let _ = panic::catch_unwind(|| {
+            after_spawn(build, look, made, outermost, size, spawned_scale);
+        });
+    }
+    let due = spawn_is_sent(outermost, hit_related_spawn()) && SENDING.load(Ordering::Relaxed);
+    if due && spawn_is_drawn_by_shot_sync(CREATE_BY_ID_CALLER_RVA.with(Cell::get)) {
+        let _ = panic::catch_unwind(note_shot_slot_not_resent);
+    } else if due {
         let (handle, name, matrix) = (handle as usize, name as usize, matrix as usize);
         let arguments = [
-            scale.to_bits(),
+            spawned_scale.to_bits(),
             fifth,
             sixth,
             seventh,
@@ -443,16 +479,21 @@ extern "system" fn create_by_id_detour(
     }
     let caller_rva = game_caller_rva();
     let was_caller = CREATE_BY_ID_CALLER_RVA.with(|cell| cell.replace(caller_rva));
-    // Bullet effects by id are sent as bullet flights, so the by-name spawn inside is nested.
     // SAFETY: the trampoline continues into the original function, which has this signature.
-    let result = with_hit_spark_call(CREATE_BY_ID_CALL_NAME, false, || {
-        nested_effect_call(|| unsafe {
-            core::mem::transmute::<*mut c_void, CreateById>(original)(
-                handle, id, matrix, fourth, fifth, sixth, seventh,
-            )
-        })
-    });
+    let create = || unsafe {
+        core::mem::transmute::<*mut c_void, CreateById>(original)(
+            handle, id, matrix, fourth, fifth, sixth, seventh,
+        )
+    };
+    // Bullet effects by id cross with their shot (flights and shot cues), so the by-name spawn
+    // inside is nested.
+    let result = with_hit_spark_call(CREATE_BY_ID_CALL_NAME, false, || nested_effect_call(create));
     CREATE_BY_ID_CALLER_RVA.with(|cell| cell.set(was_caller));
+    if !handle.is_null() {
+        // SAFETY: the game wrote the new handle through this out pointer just now.
+        let made = unsafe { handle.read() };
+        let _ = panic::catch_unwind(|| crate::enemy_bullets::note_effect_made(id, made));
+    }
     result
 }
 
@@ -621,6 +662,7 @@ fn send_world_effect(
     let Ok(Some((effect, transform))) = read_world_effect(&memory, name, matrix, in_hit) else {
         return;
     };
+    let effect = sent_effect_name(effect);
     if in_hit {
         log_hit_spark_once(&effect);
         set_last_own_hit_position([transform[3], transform[7], transform[11]]);
@@ -789,7 +831,8 @@ fn send_effect(actor: u64, params: u64, attach: u64, handle_address: u64) {
             .map_or(EFFECT_INVALID_HANDLE, i32::cast_unsigned)
     };
     let modes = captured.attach_modes();
-    let wire = captured.to_wire(handle);
+    let mut wire = captured.to_wire(handle);
+    wire.effect = sent_effect_name(wire.effect);
     if wire.validate().is_err() {
         count(&UNREADABLE);
         return;

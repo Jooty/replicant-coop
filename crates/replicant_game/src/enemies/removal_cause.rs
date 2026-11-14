@@ -5,6 +5,7 @@ pub enum RemovalCause {
     KilledLocally,
     HostRemoval,
     SilentRemoval,
+    GuestOnlyInFightWindow,
     GameRemoval,
     ZoneUnload,
 }
@@ -17,6 +18,9 @@ impl RemovalCause {
             Self::KilledLocally => "killed locally, no kill message from the host",
             Self::HostRemoval => "removed because the host removed it",
             Self::SilentRemoval => "silent removal of a hidden copy, no kill, no credit, no drop",
+            Self::GuestOnlyInFightWindow => {
+                "only you had it inside a fight window, no kill, no credit, no drop"
+            }
             Self::GameRemoval => "removed by the game here, no kill seen",
             Self::ZoneUnload => "zone unload",
         }

@@ -53,6 +53,19 @@ pub(crate) fn read_group_counts<M: GameMemory>(memory: &M) -> Result<Vec<i32>, G
         .collect())
 }
 
+/// How many actors the actor manager holds in script group `group` (the group number is the
+/// script id the scripts address an enemy by); `None` when unreadable or out of range.
+pub fn read_group_count<M: GameMemory>(memory: &M, group: u16) -> Option<i32> {
+    if group >= ENEMY_GROUP_COUNT {
+        return None;
+    }
+    let at = memory.module_base()
+        + u64::from(ACTOR_MANAGER_RVA)
+        + ACTOR_MANAGER_GROUP_COUNT_OFFSET
+        + u64::from(group) * ACTOR_MANAGER_GROUP_STRIDE;
+    memory.read_i32(at).ok()
+}
+
 fn sight<M: GameMemory>(
     memory: &M,
     group: u16,

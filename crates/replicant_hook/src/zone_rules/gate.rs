@@ -11,7 +11,7 @@ use replicant_proto::{Message, PartnerNotice};
 
 use crate::diagnostics::log_line;
 use crate::event_log::post_event;
-use crate::net::{self, NetShared, NetState};
+use crate::net::{self, NetShared, NetSharedExt, NetState};
 use crate::stay_together::note_blocked_exit;
 use crate::zone_rules::settings::zone_radius;
 
@@ -31,7 +31,7 @@ pub fn veto_zone_change(path: &str, source: ZoneChangeSource) -> bool {
         source,
         role: FollowRole::from_slot(view.local_slot),
         connected: view.state == NetState::Connected,
-        partner_game_open: !view.partner.is_game_closed(),
+        partner_game_open: !view.partner_watch().is_game_closed(),
         local: view.local.as_ref().map(|local| Placement {
             phase: local.phase,
             position: local.position,
@@ -40,7 +40,7 @@ pub fn veto_zone_change(path: &str, source: ZoneChangeSource) -> bool {
         radius: zone_radius(),
     });
     let Some(text) = verdict.prompt_text() else {
-        if view.state == NetState::Connected && view.partner.is_game_closed() {
+        if view.state == NetState::Connected && view.partner_watch().is_game_closed() {
             log_line("zone rules: the partner's game is closed, changing zones alone");
             return false;
         }
@@ -95,7 +95,7 @@ fn tell_guests_the_host_wants_to_go(net: &net::NetThread) {
 }
 
 fn companions_of(view: &NetShared) -> Vec<Companion> {
-    if let Some(remote) = view.remote.as_ref() {
+    if let Some(remote) = view.partner_state() {
         return vec![Companion {
             name: remote.name.clone(),
             placement: Some(Placement {
@@ -107,8 +107,8 @@ fn companions_of(view: &NetShared) -> Vec<Companion> {
     }
     vec![Companion {
         name: view
-            .peer_name
-            .clone()
+            .partner_name()
+            .map(str::to_owned)
             .unwrap_or_else(|| UNNAMED_COMPANION.to_owned()),
         placement: None,
         age_ms: 0,

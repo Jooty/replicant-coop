@@ -4,7 +4,9 @@ use std::sync::{LazyLock, Mutex, PoisonError};
 
 use replicant_game::npcs::read_npc_body_layer;
 use replicant_game::offsets::{ACTOR_MODEL_PACK_OFFSET, BODY_MOTION_LAYER, PUPPET_UNIQUE_ID_BASE};
-use replicant_game::power_models::{PowerCastLog, PowerModelTable, power_model_pack_name};
+use replicant_game::power_models::{
+    PowerCastLog, PowerModelTable, power_model_is_prop, power_model_pack_name,
+};
 use replicant_game::puppet::{
     MotionStep, PuppetPose, RespawnGate, follow_step, frame_to_seek, seek_layer_frame,
 };
@@ -138,7 +140,12 @@ impl PartnerPowers {
             .saturating_add_unsigned(POWER_UNIQUE_ID_OFFSET)
             .saturating_add_unsigned(u32::from(state.instance));
         let matrix = pose_of(state).creation_matrix();
-        let actor = match Puppet::spawn_model(build, &name, unique_id, &matrix) {
+        let spawned = if power_model_is_prop(state.kind) {
+            Puppet::spawn_model_by_class_id_only(build, &name, unique_id, &matrix)
+        } else {
+            Puppet::spawn_model(build, &name, unique_id, &matrix)
+        };
+        let actor = match spawned {
             Ok(actor) => actor,
             Err(error) => {
                 self.note(&format!("puppet power: cannot spawn {name:?} ({error})"));

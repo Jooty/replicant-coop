@@ -1,3 +1,5 @@
+use nc_hook::stall_watch::in_game_thread_step;
+
 use crate::actions::action::Action;
 use crate::actions::phase_change::change_phase;
 use crate::actions::queue::take_all;
@@ -15,6 +17,8 @@ use crate::effects::tick as tick_effects;
 use crate::enemy_bullets::tick as tick_enemy_bullets;
 use crate::fade_sync::tick as tick_fade_sync;
 use crate::fight_sync::tick as tick_fight_sync;
+use crate::kaine::tick_swapped_spell_effects;
+use crate::lift_rides::tick as tick_lift_rides;
 use crate::music::tick as tick_music;
 use crate::one_sided::tick as tick_one_sided;
 use crate::pickups::tick as tick_pickups;
@@ -29,6 +33,48 @@ use crate::story_writes::tick as tick_story_writes;
 use crate::teleport::{bring_guest_here, go_to_guest, tick as tick_teleport};
 
 pub(super) fn run_queued_actions(build: &VerifiedBuild) {
+    in_game_thread_step("script tick: queued actions", || run_actions(build));
+    let steps: [(&'static str, fn(&VerifiedBuild)); 30] = [
+        ("script tick: puppets", tick_puppets),
+        ("script tick: ghost", tick_ghost),
+        (
+            "script tick: swapped spell effects",
+            tick_swapped_spell_effects,
+        ),
+        ("script tick: own bullets", tick_own_bullets),
+        ("script tick: own powers", tick_own_powers),
+        ("script tick: partner bullets", tick_partner_bullets),
+        ("script tick: enemy bullets", tick_enemy_bullets),
+        ("script tick: partner powers", tick_partner_powers),
+        ("script tick: effects", tick_effects),
+        ("script tick: music", tick_music),
+        ("script tick: downed", tick_downed),
+        ("script tick: pickups", tick_pickups),
+        ("script tick: stay together", tick_stay_together),
+        ("script tick: dialogue", tick_dialogue),
+        ("script tick: fade sync", tick_fade_sync),
+        ("script tick: prologue levels", tick_prologue_levels),
+        ("script tick: door sync", tick_door_sync),
+        ("script tick: cutscene skip", tick_cutscene_skip),
+        ("script tick: fight sync", tick_fight_sync),
+        ("script tick: story writes", tick_story_writes),
+        ("script tick: story relay", tick_story_relay),
+        ("script tick: relay calls", tick_relay_calls),
+        ("script tick: one sided", tick_one_sided),
+        ("script tick: script rolls", tick_script_rolls),
+        ("script tick: boss messages", tick_boss_messages),
+        ("script tick: story jump", tick_story_jump),
+        ("script tick: lift rides", tick_lift_rides),
+        ("script tick: teleport", tick_teleport),
+        ("script tick: story progress", tick_story_progress),
+        ("script tick: containers", tick_containers),
+    ];
+    for (name, step) in steps {
+        in_game_thread_step(name, || step(build));
+    }
+}
+
+fn run_actions(build: &VerifiedBuild) {
     for action in take_all() {
         let outcome = match action {
             Action::ChangePhase { phase, point } => {
@@ -44,32 +90,4 @@ pub(super) fn run_queued_actions(build: &VerifiedBuild) {
             Err(error) => log_line(&format!("action: {action:?} failed ({error})")),
         }
     }
-    tick_puppets(build);
-    tick_ghost(build);
-    tick_own_bullets(build);
-    tick_own_powers(build);
-    tick_partner_bullets(build);
-    tick_enemy_bullets(build);
-    tick_partner_powers(build);
-    tick_effects(build);
-    tick_music(build);
-    tick_downed(build);
-    tick_pickups(build);
-    tick_stay_together(build);
-    tick_dialogue(build);
-    tick_fade_sync(build);
-    tick_prologue_levels(build);
-    tick_door_sync(build);
-    tick_cutscene_skip(build);
-    tick_fight_sync(build);
-    tick_story_writes(build);
-    tick_story_relay(build);
-    tick_relay_calls(build);
-    tick_one_sided(build);
-    tick_script_rolls(build);
-    tick_boss_messages(build);
-    tick_story_jump(build);
-    tick_teleport(build);
-    tick_story_progress(build);
-    tick_containers(build);
 }

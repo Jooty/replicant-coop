@@ -3,12 +3,11 @@ use nc_launcher::lobby::{
     GuestWaiting, HostClosedInputs, LastLaunch, LaunchMode, MAX_NAME_BYTES, NameError,
     PLAYER_TABLE_HEADERS, PlayerRole, PlayerStatus, QuitFallback, QuitStep, ReadyInputs, RowInputs,
     guest_accepts_start, host_game_closed, host_options_editable, lobby_ready, new_game_slot,
-    own_close_notice, picker_choices, player_rows, player_status, relaunch_choice, resolve_mode,
-    start_enabled, validate_name,
+    own_close_notice, player_rows, player_status, relaunch_choice, resolve_mode, start_enabled,
+    validate_name,
 };
 use nc_launcher::net::{LOBBY_MODE_CONTINUE, LOBBY_MODE_NEW_GAME, LobbyReady};
 use nc_launcher::saves::SlotSummary;
-use nc_launcher_core::{GameProfile, REPLICANT};
 use replicant_proto::{GameReadiness, PartnerBody};
 
 fn slot(index: u8, used: bool) -> SlotSummary {
@@ -329,66 +328,32 @@ fn the_player_table_headers_are_player_role_character_status() {
 }
 
 #[test]
-fn hosting_alone_lists_only_the_host_without_a_picker() {
+fn hosting_alone_lists_only_the_host() {
     let rows = player_rows(RowInputs {
         viewer_is_guest: false,
         own_name: "Ada",
         peer_name: None,
-        guest_body: PartnerBody::Nier,
     });
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].role, PlayerRole::Host);
     assert!(rows[0].you);
-    assert!(!rows[0].picker);
 }
 
 #[test]
-fn the_host_sees_the_guests_pick_and_only_the_guest_gets_a_picker() {
-    let host_view = player_rows(RowInputs {
-        viewer_is_guest: false,
-        own_name: "Ada",
-        peer_name: Some("Bo"),
-        guest_body: PartnerBody::PrologueCharacter,
-    });
-    assert_eq!(host_view.len(), 2);
-    assert!(host_view.iter().all(|row| !row.picker));
-    assert_eq!(host_view[1].role, PlayerRole::Guest);
-    assert_eq!(host_view[1].body, PartnerBody::PrologueCharacter);
-    assert_eq!(host_view[0].body, PartnerBody::Nier);
-
-    let guest_view = player_rows(RowInputs {
-        viewer_is_guest: true,
-        own_name: "Bo",
-        peer_name: Some("Ada"),
-        guest_body: PartnerBody::PrologueCharacter,
-    });
-    assert_eq!(guest_view[0].role, PlayerRole::Host);
-    assert_eq!(guest_view[0].name, "Ada");
-    assert!(!guest_view[0].picker);
-    assert!(guest_view[1].you && guest_view[1].picker);
-}
-
-#[test]
-fn the_picker_choices_leave_kaine_out() {
-    let choices = picker_choices(&REPLICANT, &[PartnerBody::Nier]);
-    assert!(!choices.contains(&PartnerBody::SeedKaineE));
-    assert_eq!(choices, [PartnerBody::Nier, PartnerBody::PrologueCharacter]);
-}
-
-#[test]
-fn a_game_that_forbids_sharing_leaves_out_the_host_character() {
-    let strict = GameProfile {
-        characters_shareable: false,
-        ..REPLICANT
-    };
-    assert_eq!(
-        picker_choices(&strict, &[PartnerBody::Nier]),
-        [PartnerBody::PrologueCharacter]
-    );
-    assert_eq!(
-        picker_choices(&strict, &[]),
-        [PartnerBody::Nier, PartnerBody::PrologueCharacter]
-    );
+fn the_host_always_has_the_first_body_and_the_guest_the_swapped_body() {
+    for viewer_is_guest in [false, true] {
+        let rows = player_rows(RowInputs {
+            viewer_is_guest,
+            own_name: "Ada",
+            peer_name: Some("Bo"),
+        });
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].role, PlayerRole::Host);
+        assert_eq!(rows[0].body, PartnerBody::Nier);
+        assert_eq!(rows[1].role, PlayerRole::Guest);
+        assert_eq!(rows[1].body, PartnerBody::SeedKaineE);
+        assert_eq!(rows[1].you, viewer_is_guest);
+    }
 }
 
 #[test]
@@ -403,13 +368,13 @@ fn every_character_has_a_label_and_the_nier_variants_share_one() {
 }
 
 #[test]
-fn the_normal_body_is_labelled_as_following_the_story() {
+fn the_normal_body_is_labelled_with_its_plain_name() {
     use nc_launcher::lobby::body_label;
     use replicant_proto::PartnerBody;
-    assert_eq!(body_label(PartnerBody::Nier), "Nier (follows the story)");
+    assert_eq!(body_label(PartnerBody::Nier), "Nier");
     assert_eq!(
         body_label(PartnerBody::PrologueCharacter),
-        "The prologue character"
+        body_label(PartnerBody::Nier)
     );
 }
 
@@ -484,7 +449,7 @@ fn a_guest_still_waiting_for_the_host_game_has_no_game_to_close() {
 }
 
 #[test]
-fn a_game_that_closes_in_a_session_says_so_and_a_peer_leaving_says_nothing() {
+fn a_game_that_closes_in_a_session_is_noticed_and_a_peer_leaving_is_not() {
     assert_eq!(
         own_close_notice(true, false),
         Some(FollowNotice::YourGameClosed)
@@ -493,11 +458,6 @@ fn a_game_that_closes_in_a_session_says_so_and_a_peer_leaving_says_nothing() {
     assert_eq!(
         own_close_notice(true, true),
         Some(FollowNotice::HostGameClosed)
-    );
-    assert_eq!(FollowNotice::YourGameClosed.text(), "Your game closed.");
-    assert_eq!(
-        FollowNotice::HostGameClosed.text(),
-        "The host's game closed."
     );
 }
 

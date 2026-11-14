@@ -34,6 +34,8 @@ pub struct PromptView {
     pub parked_in_dialog_wait: bool,
     /// A later host stream entry has waited behind the script slot this long.
     pub entry_behind_ms: Option<u64>,
+    /// This copy's window is unfocused or behind another, so nobody is reading its pop-up.
+    pub window_unattended: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +77,8 @@ pub struct PromptStep {
     pub gave_up_on: Option<PromptPageId>,
     pub catch_up_close: Option<PromptCatchUpClose>,
     pub catch_up_gave_up: bool,
+    /// A close of this copy's own page: the partner dismissed the same page and nobody is reading this one.
+    pub unattended_close: Option<PromptClose>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +109,7 @@ struct HostCount {
     in_fight: bool,
     received_ms: u64,
     earlier: Vec<(u32, u64)>,
+    from_guest: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,6 +130,7 @@ pub struct PromptFollow {
     own_dismissed: Vec<(PromptPageId, u32)>,
     host_dismissed: Vec<HostCount>,
     host_led_closed: Vec<HostLedClosed>,
+    own_dismissed_at_ms: Vec<(PromptPageId, u64)>,
     attempt: Option<CloseAttempt>,
     last_now_ms: u64,
     page_shown_since_ms: u64,
@@ -219,6 +225,7 @@ impl PromptFollow {
             own_dismissed: Vec::new(),
             host_dismissed: Vec::new(),
             host_led_closed: Vec::new(),
+            own_dismissed_at_ms: Vec::new(),
             attempt: None,
             last_now_ms: 0,
             page_shown_since_ms: 0,
@@ -241,12 +248,28 @@ impl PromptFollow {
     }
 
     pub fn receive_host_dismissal_at(&mut self, dismissal: PromptDismissal, received_ms: u64) {
+        self.receive_partner_dismissal_at(dismissal, received_ms, false);
+    }
+
+    /// A count the guest took outside a fight. Only a reward prompt follows it on every copy; any
+    /// other page follows it only when the guest led it here or nobody is reading it.
+    pub fn receive_guest_dismissal_at(&mut self, dismissal: PromptDismissal, received_ms: u64) {
+        self.receive_partner_dismissal_at(dismissal, received_ms, true);
+    }
+
+    fn receive_partner_dismissal_at(
+        &mut self,
+        dismissal: PromptDismissal,
+        received_ms: u64,
+        from_guest: bool,
+    ) {
         let mut count = HostCount {
             page: dismissal.page,
             times: dismissal.times,
             in_fight: dismissal.in_fight,
             received_ms,
             earlier: Vec::new(),
+            from_guest,
         };
         if let Some(known) = self
             .host_dismissed
@@ -308,6 +331,7 @@ impl PromptFollow {
             self.own_dismissed.clear();
             self.host_dismissed.clear();
             self.host_led_closed.clear();
+            self.own_dismissed_at_ms.clear();
             self.attempt = None;
         }
         if view.stream_active != self.stream_was_active {
@@ -315,6 +339,7 @@ impl PromptFollow {
             self.stream_was_active = view.stream_active;
             self.own_dismissed.clear();
             self.host_led_closed.clear();
+            self.own_dismissed_at_ms.clear();
             self.attempt = None;
             // Counts of the scope left are stale; a host count of the new one may come first.
             self.host_dismissed
@@ -349,6 +374,18 @@ impl PromptFollow {
         {
             match self.next_close_try(view.now_ms) {
                 CloseTry::Now(try_number) => step.close = Some(PromptClose { page, try_number }),
+                CloseTry::GiveUp => step.gave_up_on = Some(page),
+                CloseTry::Later => {}
+            }
+            return step;
+        }
+        if let Some(page) = self.shown_page()
+            && self.partner_dismissed_this_unattended_own_page(page, &view)
+        {
+            match self.next_close_try(view.now_ms) {
+                CloseTry::Now(try_number) => {
+                    step.unattended_close = Some(PromptClose { page, try_number });
+                }
                 CloseTry::GiveUp => step.gave_up_on = Some(page),
                 CloseTry::Later => {}
             }
@@ -419,6 +456,35 @@ impl PromptFollow {
         in_scope && count_of(&self.own_dismissed, page) < self.host_times_to_follow(page, view)
     }
 
+    fn partner_dismissed_this_unattended_own_page(
+        &self,
+        page: PromptPageId,
+        view: &PromptView,
+    ) -> bool {
+        let own_page = self
+            .current
+            .is_some_and(|identity| identity.host_led_since_ms.is_none());
+        if view.stream_active
+            || !view.window_unattended
+            || !own_page
+            || !Self::follows_outside_a_fight(page, view)
+        {
+            return false;
+        }
+        let shown_or_just_before_ms = self
+            .page_shown_since_ms
+            .saturating_sub(PARTNER_CLOSE_COUNTS_IF_SEEN_BEFORE_THIS_COPY_OPENED_WITHIN_MS);
+        // A partner count this copy already answered with a dismissal of its own is used up.
+        let since_ms = self
+            .own_dismissed_at_ms
+            .iter()
+            .find(|(known, _)| *known == page)
+            .map_or(shown_or_just_before_ms, |(_, dismissed_ms)| {
+                shown_or_just_before_ms.max(dismissed_ms.saturating_add(1))
+            });
+        self.host_led_dismissals_since(page, since_ms) > 0
+    }
+
     fn host_led_dismissals_since(&self, page: PromptPageId, since_ms: u64) -> u32 {
         let Some(count) = self.host_count(page, false) else {
             return 0;
@@ -468,6 +534,13 @@ impl PromptFollow {
         let Some(count) = self.host_count(page, view.stream_active) else {
             return 0;
         };
+        if count.from_guest
+            && !page
+                .native
+                .is_some_and(ScriptDialogNative::is_reward_prompt)
+        {
+            return 0;
+        }
         let fresh = view.stream_active
             || view.now_ms.saturating_sub(count.received_ms)
                 <= HOST_DISMISSAL_FOLLOWED_OUTSIDE_A_FIGHT_FOR_MS;
@@ -498,6 +571,7 @@ impl PromptFollow {
         }
         let times = count_of(&self.own_dismissed, page).saturating_add(1);
         set_count(&mut self.own_dismissed, page, times);
+        set_time(&mut self.own_dismissed_at_ms, page, view.now_ms);
         Some(PromptDismissal {
             page,
             times,
@@ -545,6 +619,14 @@ fn set_count(counts: &mut Vec<(PromptPageId, u32)>, page: PromptPageId, times: u
     }
 }
 
+fn set_time(times: &mut Vec<(PromptPageId, u64)>, page: PromptPageId, at_ms: u64) {
+    if let Some(entry) = times.iter_mut().find(|(known, _)| *known == page) {
+        entry.1 = at_ms;
+    } else {
+        times.push((page, at_ms));
+    }
+}
+
 /// Whether the script slot is parked in a dialog wait: its last poll still waited, and came
 /// within `DIALOG_WAIT_PARKED_WHILE_POLLED_WITHIN_MS`.
 pub fn dialog_wait_parked(last_still_waiting_poll_ms: Option<u64>, now_ms: u64) -> bool {
@@ -586,6 +668,13 @@ pub fn format_prompt_opened(
 pub fn format_prompt_follow_close(close: PromptClose) -> String {
     format!(
         "prompt follow: closing your {}, your partner dismissed it",
+        page_label(close.page)
+    )
+}
+
+pub fn format_prompt_unattended_close(close: PromptClose) -> String {
+    format!(
+        "prompt follow: closing your {}, your partner dismissed theirs and nobody is at this window",
         page_label(close.page)
     )
 }

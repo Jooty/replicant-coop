@@ -40,7 +40,7 @@ pub fn layout_id_of(build: &VerifiedBuild, door: *mut c_void) -> i32 {
     unsafe_code,
     reason = "calls the game's map manager lookup of an actor by layout id"
 )]
-pub(super) fn door_of_layout_id(build: &VerifiedBuild, layout_id: u16) -> Option<*mut c_void> {
+pub fn actor_of_layout_id(build: &VerifiedBuild, layout_id: u16) -> Option<*mut c_void> {
     let base = build.module_base();
     let manager = base + u64::from(MAP_MANAGER_RVA);
     let memory = InProcessMemory::new(build);
@@ -60,11 +60,13 @@ pub(super) fn door_of_layout_id(build: &VerifiedBuild, layout_id: u16) -> Option
             i32::from(layout_id),
         )
     };
-    if actor.is_null() {
-        return None;
-    }
-    let vtable = memory.read_u64(actor as u64).ok()?;
-    (vtable == base + u64::from(DOOR_VTABLE_RVA)).then_some(actor)
+    (!actor.is_null()).then_some(actor)
+}
+
+pub(super) fn door_of_layout_id(build: &VerifiedBuild, layout_id: u16) -> Option<*mut c_void> {
+    let actor = actor_of_layout_id(build, layout_id)?;
+    let vtable = InProcessMemory::new(build).read_u64(actor as u64).ok()?;
+    (vtable == build.module_base() + u64::from(DOOR_VTABLE_RVA)).then_some(actor)
 }
 
 pub(super) fn read_door_state(build: &VerifiedBuild, door: *mut c_void) -> Option<(bool, bool)> {

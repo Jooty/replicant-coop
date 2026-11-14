@@ -8,6 +8,9 @@ use replicant_proto::{
 use crate::enemies::EnemySighting;
 use crate::puppet::LayerMotion;
 
+pub const ENEMY_ROUND_CAPACITY: usize =
+    MAX_ENEMIES_PER_SNAPSHOT * MAX_ENEMY_SNAPSHOT_PARTS as usize;
+
 /// The wire form of one sighting, or `None` when its position is not a usable number.
 pub fn enemy_state(id: EnemyId, sighting: &EnemySighting) -> Option<EnemyState> {
     if sighting
@@ -48,7 +51,8 @@ pub fn split_snapshot(
             .total_cmp(&nearest_player_distance(b.position, players))
             .then(a.id.cmp(&b.id))
     });
-    enemies.truncate(MAX_ENEMIES_PER_SNAPSHOT * usize::from(MAX_ENEMY_SNAPSHOT_PARTS));
+    enemies.truncate(ENEMY_ROUND_CAPACITY);
+    let round = u16::try_from(enemies.len()).unwrap_or(u16::MAX);
     let chunks: Vec<Vec<EnemyState>> = if enemies.is_empty() {
         vec![Vec::new()]
     } else {
@@ -66,6 +70,7 @@ pub fn split_snapshot(
             part,
             parts,
             total,
+            round,
             enemies,
         })
         .collect()

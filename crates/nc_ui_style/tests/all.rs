@@ -1,7 +1,11 @@
+#[path = "control_look.rs"]
+mod control_look;
 #[path = "convert.rs"]
 mod convert;
 #[path = "palette.rs"]
 mod palette;
+#[path = "sand_palette.rs"]
+mod sand_palette;
 
 use std::collections::BTreeSet;
 use std::path::Path;

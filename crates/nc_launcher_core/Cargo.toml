@@ -14,7 +14,9 @@ path = "tests/all.rs"
 flate2 = { workspace = true }
 replicant_game = { workspace = true }
 nc_net = { workspace = true, features = ["iroh"] }
+nc_wire = { workspace = true }
 replicant_proto = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
 
 [lints]

@@ -148,7 +148,7 @@ fn guest_tick(
                     far_units(partner_place)
                 ));
                 if move_needed
-                    && let Some(remote) = &view.remote
+                    && let Some(remote) = view.partner_state()
                     && let GatherVerdict::Come { across_side_view } = verdict
                 {
                     come_to_the_starter(

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use replicant_game::GameMemory;
 use replicant_game::enemies::{
     AggroPlanner, CopyStanceLog, CreationWatch, DamageTakenLedger, DyingBodies, GuestHitGuard,
-    GuestOnlyWatch, KillWatch, PlayerHitGuard, RemovalCause,
+    GuestOnlyWatch, HostHitStaggerWatch, KillWatch, PlayerHitGuard, RemovalCause,
 };
 use replicant_game::offsets::{ACTOR_KIND_MASK_OFFSET, ACTOR_SPAWN_SERIAL_OFFSET};
 use replicant_game::puppet::actor_is_live;
@@ -35,6 +35,7 @@ pub(super) struct CombatState {
     pub(super) host_gone_bodies: HashSet<EnemyId>,
     pub(super) stances: CopyStanceLog,
     pub(super) menu_hit_skip_logged_ms: Option<u64>,
+    pub(super) stagger_watch: HostHitStaggerWatch,
     pub(super) aggro_menus_logged: (bool, bool),
     pub(super) host_bodies: DyingBodies,
     pub(super) motion_watch: HashMap<EnemyId, MotionWatch>,

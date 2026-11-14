@@ -78,8 +78,7 @@ fn watch_local_fire(build: &VerifiedBuild, name: &str) {
         return;
     };
     let partner_here = view
-        .remote
-        .as_ref()
+        .partner_state()
         .is_some_and(|remote| remote.state.phase == phase);
     if !partner_here {
         return;

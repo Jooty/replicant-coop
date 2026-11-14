@@ -42,6 +42,15 @@ pub struct AttackGaugeNode {
     pub max_hp: i32,
 }
 
+/// The guest's game opened its own gauge on a shared boss (`open`, as the guest's game set it up)
+/// while the host shows none: the guest asks the host to open the same, numbered `ask`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AttackGaugeAsk {
+    pub phase: u16,
+    pub ask: u32,
+    pub open: AttackGaugeOpen,
+}
+
 /// What one guest hit took from node `node` of the gauge opening `serial`, numbered `seq` by the
 /// guest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,9 +64,24 @@ pub struct AttackGaugeHit {
 
 impl AttackGaugeState {
     pub fn validate(&self) -> Result<(), WireError> {
-        let Some(open) = &self.open else {
-            return Ok(());
-        };
+        self.open.as_ref().map_or(Ok(()), AttackGaugeOpen::validate)
+    }
+}
+
+impl AttackGaugeAsk {
+    pub fn validate(&self) -> Result<(), WireError> {
+        if self.open.nodes.is_empty() {
+            return Err(WireError::OutOfRange {
+                field: "gauge nodes",
+            });
+        }
+        self.open.validate()
+    }
+}
+
+impl AttackGaugeOpen {
+    pub fn validate(&self) -> Result<(), WireError> {
+        let open = self;
         open.boss.validate()?;
         if let Some(partner) = open.partner {
             partner.validate()?;

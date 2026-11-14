@@ -18,6 +18,8 @@ pub struct GameCard {
     pub dll_source: Option<PathBuf>,
     pub mod_status: ModStatus,
     pub installed_build: Option<String>,
+    pub ready_build: Option<String>,
+    pub exe_supported: bool,
 }
 
 pub fn build_card(
@@ -44,11 +46,21 @@ pub fn build_card(
         .filter(|_| matches!(status, ModStatus::Current | ModStatus::Outdated))
         .and_then(|game| sha256_file(&game.game_dir.join(profile.loader_dll_name)).ok())
         .map(|hash| hash.chars().take(SHORT_BUILD_CHARS).collect());
+    let ready_build = dll_source
+        .as_deref()
+        .filter(|_| status == ModStatus::Outdated)
+        .and_then(|dll| sha256_file(dll).ok())
+        .map(|hash| hash.chars().take(SHORT_BUILD_CHARS).collect());
+    let exe_supported = install
+        .as_ref()
+        .is_some_and(GameInstall::exe_build_supported);
     GameCard {
         profile,
         install,
         dll_source,
         mod_status: status,
         installed_build,
+        ready_build,
+        exe_supported,
     }
 }

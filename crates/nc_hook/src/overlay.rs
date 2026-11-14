@@ -1,6 +1,5 @@
+mod extra_panels;
 mod install;
-mod menu_state;
-mod menu_window;
 mod overlay_game;
 mod render_loop;
 pub mod style;

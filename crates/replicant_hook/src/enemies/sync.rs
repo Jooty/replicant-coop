@@ -3,12 +3,14 @@ use std::sync::{LazyLock, Mutex, PoisonError};
 use std::time::Instant;
 
 use replicant_game::enemies::{
-    ENEMY_MIRROR_DELAY_MS, EnemyLog, EnemyMirror, EnemyRoster, EnemySighting,
-    FIGHT_SPAWN_FILL_IN_GRACE_MS, FightSpawnFillIn, ListDiffWatch, MirroredEnemy, RemovalCause,
-    RosterUpdate, enemy_state, fight_spawn_fill_in_gave_up_text, fight_spawn_fill_in_snap_off_text,
-    fight_spawn_filled_in_text, match_enemies, missing_host_spawns, partner_actors,
-    plan_fight_bindings, plan_takeovers, relayed_spawn_text, scaled_matrix, scan_enemies,
-    shadow_matrix, split_snapshot, stalled_copy_time_scale_fix,
+    CountLog, ENEMY_ID_LIST_INTERVAL_MS, ENEMY_MIRROR_DELAY_MS, ENEMY_ROUND_CAPACITY, EnemyLog,
+    EnemyMirror, EnemyRoster, EnemySighting, FIGHT_SPAWN_FILL_IN_GRACE_MS, FightSpawnFillIn,
+    HostFightEnemy, IntervalClock, ListDiffWatch, MirroredEnemy, RemovalCause, RosterUpdate,
+    WaitingFightSpawn, enemy_state, fight_spawn_fill_in_gave_up_text,
+    fight_spawn_fill_in_snap_off_text, fight_spawn_filled_in_text, match_enemies,
+    missing_host_spawns, partner_actors, plan_fight_bindings, plan_takeovers, relayed_spawn_text,
+    scaled_matrix, scan_enemies, shadow_matrix, split_id_list, split_snapshot,
+    stalled_copy_time_scale_fix,
 };
 use replicant_game::npcs::{
     EventSceneClock, NPC_EVENT_SCENE_SETTLE_MS, npc_motion_records_readable, read_enemy_body_layer,
@@ -67,6 +69,8 @@ struct EnemySync {
     combat: CombatState,
     log: EnemyLog,
     diff_watch: ListDiffWatch,
+    count_log: CountLog,
+    id_list_clock: IntervalClock,
     scene_clock: EventSceneClock,
     logged_settling: bool,
     fight_fill_in: FightSpawnFillIn,
@@ -88,6 +92,8 @@ impl EnemySync {
         self.roster.reset();
         self.log.reset();
         self.diff_watch.reset();
+        self.count_log.reset();
+        self.id_list_clock.reset();
         self.mirror.clear();
         self.last_host_send = None;
         self.release_combat();
@@ -104,6 +110,8 @@ impl EnemySync {
             self.roster.reset();
             self.log.reset();
             self.diff_watch.reset();
+            self.count_log.reset();
+            self.id_list_clock.reset();
             self.mirror.clear();
             self.last_host_send = None;
             self.release_combat();
@@ -154,6 +162,7 @@ pub fn tick_enemy_sync(build: &VerifiedBuild) {
         matches!(
             message,
             Message::EnemySnapshot(_)
+                | Message::EnemyIdList(_)
                 | Message::EnemySpawned(_)
                 | Message::EnemyCreation(_)
                 | Message::EnemyGone(_)
@@ -167,7 +176,7 @@ pub fn tick_enemy_sync(build: &VerifiedBuild) {
     });
     let view = net.view();
     let options = view.options;
-    let Some(remote) = view.remote else {
+    let Some(remote) = view.partner_state().cloned() else {
         sync.go_idle(build, "no other player is connected");
         return;
     };
@@ -414,6 +423,15 @@ fn host_step(
             .map_or(remote.state.position, |at| [at.x, at.y, at.z]),
         remote.state.position,
     ];
+    if let Some(text) = sync.count_log.host_line(states.len(), ENEMY_ROUND_CAPACITY) {
+        sync.note(text);
+    }
+    if sync.id_list_clock.due(now_ms, ENEMY_ID_LIST_INTERVAL_MS) {
+        let ids: Vec<EnemyId> = states.keys().copied().collect();
+        for list in split_id_list(sync.tick, local.phase, ids) {
+            net.send_relayed(Message::EnemyIdList(list));
+        }
+    }
     let parts = split_snapshot(
         sync.tick,
         local.phase,
@@ -453,8 +471,9 @@ fn guest_step(sync: &mut EnemySync, local: &LocalView<'_>, relayed: Vec<Message>
     let host_companions = samples.split_off(&EnemyId::companion(0));
     let inside_fight_window = crate::fight_sync::covers_phase(local.phase);
     if inside_fight_window {
-        bind_fight_spawns(sync, local, &mut update);
+        bind_fight_spawns(sync, local, &mut update, &samples);
     } else {
+        sync.roster.stop_all_waiting();
         take_over_copies(sync, local, &mut update, &samples);
         adopt_host_ids(sync, local.phase, &mut update, &samples);
     }
@@ -504,10 +523,19 @@ fn guest_step(sync: &mut EnemySync, local: &LocalView<'_>, relayed: Vec<Message>
     status.unmatched_local = report.unmatched_local;
     status.unmatched_remote = report.unmatched_remote;
     let authority = snap_enabled();
-    let host_list_complete = sync
-        .mirror
-        .host_total()
-        .is_some_and(|total| usize::from(total) <= sync.mirror.len());
+    let host_view = sync.mirror.host_view(now_ms);
+    if let Some(total) = sync.mirror.host_total()
+        && let Some(round) = sync.mirror.latest_complete_round()
+        && let Some(text) = sync.count_log.guest_line(
+            now_ms,
+            total,
+            round.round,
+            sync.mirror.len(),
+            update.seen.len(),
+        )
+    {
+        sync.note(text);
+    }
     if !inside_fight_window {
         sync.fight_fill_in.clear();
         if authority {
@@ -523,7 +551,7 @@ fn guest_step(sync: &mut EnemySync, local: &LocalView<'_>, relayed: Vec<Message>
         &update.seen,
         &samples,
         authority,
-        host_list_complete,
+        &host_view,
     );
     let driven_companions = companion::guest_companions(
         &mut sync.companions,
@@ -533,7 +561,7 @@ fn guest_step(sync: &mut EnemySync, local: &LocalView<'_>, relayed: Vec<Message>
         authority,
         in_scene,
     );
-    let diff = guest_combat::list_diff(&sync.combat, &update.seen, &samples, host_list_complete);
+    let diff = guest_combat::list_diff(&sync.combat, &update.seen, &samples, &host_view);
     if let Some(text) = sync.diff_watch.observe(now_ms, diff) {
         sync.note(text);
     }
@@ -730,6 +758,7 @@ fn log_motion_stall(
 fn receive(sync: &mut EnemySync, now_ms: u64, message: &Message) {
     match message {
         Message::EnemySnapshot(snapshot) => sync.mirror.receive_snapshot(now_ms, snapshot),
+        Message::EnemyIdList(list) => sync.mirror.receive_id_list(now_ms, list),
         Message::EnemySpawned(spawned) => {
             sync.mirror.receive_spawned(now_ms, spawned);
             sync.note(relayed_spawn_text(&spawned.enemy));
@@ -920,52 +949,100 @@ fn fill_in_fight_spawns(
     }
 }
 
-fn bind_fight_spawns(sync: &mut EnemySync, local: &LocalView<'_>, update: &mut RosterUpdate) {
-    let own_spawns: Vec<(EnemyId, u16)> = update
-        .spawned
-        .iter()
-        .filter_map(|id| {
-            sync.roster
-                .own_arrival_of(*id)
-                .map(|arrival| (*id, arrival))
-        })
-        .collect();
-    if own_spawns.is_empty() {
+fn bind_fight_spawns(
+    sync: &mut EnemySync,
+    local: &LocalView<'_>,
+    update: &mut RosterUpdate,
+    samples: &BTreeMap<EnemyId, MirroredEnemy>,
+) {
+    let mut waiting = Vec::new();
+    for id in sync.roster.fight_waiting_spawns() {
+        let Some((_, sighting)) = update.seen.iter().find(|(seen, _)| *seen == id) else {
+            continue;
+        };
+        if is_boss(id) {
+            sync.roster.stop_waiting(id);
+            continue;
+        }
+        waiting.push(WaitingFightSpawn {
+            id,
+            max_hp: sighting.max_hp,
+            position: sighting.position,
+        });
+    }
+    if waiting.is_empty() {
         return;
     }
+    let ended = ended_or_dying_ids(sync);
+    let host_live: Vec<HostFightEnemy> = samples
+        .values()
+        .filter(|host| !ended.contains(&host.id))
+        .map(|host| HostFightEnemy {
+            id: host.id,
+            max_hp: host.max_hp,
+            position: host.position,
+        })
+        .collect();
+    let waiting_ids: HashSet<EnemyId> = waiting.iter().map(|spawn| spawn.id).collect();
     let copies_here: HashSet<EnemyId> = update
         .seen
         .iter()
         .map(|(id, _)| *id)
-        .filter(|id| sync.combat.created.contains(id) && !update.spawned.contains(id))
+        .filter(|id| sync.combat.created.contains(id) && !waiting_ids.contains(id))
+        .collect();
+    let held_by_others: HashSet<EnemyId> = sync
+        .roster
+        .held_ids()
+        .into_iter()
+        .filter(|id| !waiting_ids.contains(id) && !copies_here.contains(id))
         .collect();
     let plan = plan_fight_bindings(
-        &own_spawns,
-        &sync.roster.held_ids(),
+        &waiting,
+        &host_live,
+        &ended,
+        &held_by_others,
         &copies_here,
         &sync.combat.taken_over,
     );
+    for id in &plan.kept {
+        sync.roster.stop_waiting(*id);
+    }
     let mut adoptions = Vec::new();
     for (own, copy) in plan.takeovers {
         if !destroy_taken_over_copy(sync, local, update, own, copy) {
             continue;
         }
+        sync.roster.stop_waiting(copy);
         adoptions.push((own, copy));
         sync.note(format!(
-            "your game's spawn {} inside the fight window took over the host's copy {} (same wave, same order)",
+            "your game's spawn {} inside the fight window took over the host's copy {} (same group and max hp, nearest)",
             enemy_id_text(own),
             enemy_id_text(copy)
         ));
     }
     update.rename(&adoptions);
-    let made = sync.roster.bind_ids(&plan.renames);
+    let mut moves = plan.renames.clone();
+    for id in &plan.retired {
+        let retired = sync.roster.retired_id(id.group);
+        moves.push((*id, retired));
+    }
+    let made = sync.roster.reassign_ids(&moves);
     update.rename(&made);
-    for (own, bound) in made {
-        sync.note(format!(
-            "your game's spawn {} inside the fight window is the host's {} (same wave, same order)",
-            enemy_id_text(own),
-            enemy_id_text(bound)
-        ));
+    for (own, to) in made {
+        if plan.renames.contains(&(own, to)) {
+            sync.roster.stop_waiting(to);
+            sync.note(format!(
+                "your game's spawn {} inside the fight window is the host's {} (same group and max hp, nearest)",
+                enemy_id_text(own),
+                enemy_id_text(to)
+            ));
+        } else {
+            sync.note(format!(
+                "your game's spawn {} inside the fight window matches no live host enemy, so it is renamed {}, an id the host never has; it waits for the host's spawn or is removed",
+                enemy_id_text(own),
+                enemy_id_text(to)
+            ));
+        }
     }
 }
 

@@ -35,7 +35,7 @@ pub fn tick(build: &VerifiedBuild) {
         ));
     }
     let arrived = net.take_relayed(|message| matches!(message, Message::ContainerOpened(_)));
-    let partner_name = view.peer_name.clone().unwrap_or_default();
+    let partner_name = view.partner_name().map(str::to_owned).unwrap_or_default();
     for message in arrived {
         if let Message::ContainerOpened(opened) = message {
             apply_notice(build, role, &opened, local_phase, &partner_name);
@@ -51,7 +51,7 @@ pub fn tick(build: &VerifiedBuild) {
     if role == FollowRole::Host {
         let partner_phase = view
             .partner_in_play()
-            .then(|| view.remote.as_ref().map(|remote| remote.state.phase))
+            .then(|| view.partner_state().map(|remote| remote.state.phase))
             .flatten();
         send_opened_ids_when_together(net, local_phase, partner_phase);
     }

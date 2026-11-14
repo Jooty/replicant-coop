@@ -48,6 +48,7 @@ pub(super) fn apply_pending(build: &VerifiedBuild, actor: usize) -> bool {
             y: target.y - here.y,
             z: target.z - here.z,
         };
+        crate::teleport::note_mod_move();
         game.write_noclip_step(actor as u64, step).is_ok()
     })
     .unwrap_or(false)

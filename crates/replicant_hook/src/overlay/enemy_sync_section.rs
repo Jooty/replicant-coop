@@ -1,4 +1,5 @@
 use hudhook::imgui::Ui;
+use nc_hook::menu_view::parts::{sub_heading, switch_line};
 use replicant_proto::EnemyId;
 
 use crate::enemies::{
@@ -9,10 +10,9 @@ use crate::enemies::{
 const MAX_IDS_LISTED: usize = 8;
 
 pub(super) fn draw_enemy_sync(ui: &Ui) {
-    ui.separator();
-    ui.text("shared enemies (test readout)");
+    sub_heading(ui, "shared enemies (test readout)");
     let mut snap = snap_enabled();
-    if ui.checkbox("guest: my enemies follow the host's", &mut snap) {
+    if switch_line(ui, "guest: my enemies follow the host's", &mut snap) {
         set_snap_enabled(snap);
     }
     let status = enemy_sync_status();

@@ -2,9 +2,9 @@ use std::collections::HashSet;
 
 use replicant_game::enemies::{
     EnemyRoster, EnemySighting, FIGHT_SPAWN_FILL_IN_GRACE_MS, FIGHT_SPAWN_FILL_IN_RETRIES,
-    FIGHT_SPAWN_FILL_IN_RETRY_GAP_MS, FightSpawnFillIn, fight_spawn_fill_in_gave_up_text,
-    fight_spawn_fill_in_snap_off_text, fight_spawn_filled_in_text, plan_fight_bindings,
-    plan_takeovers,
+    FIGHT_SPAWN_FILL_IN_RETRY_GAP_MS, FightSpawnFillIn, HostFightEnemy, WaitingFightSpawn,
+    fight_spawn_fill_in_gave_up_text, fight_spawn_fill_in_snap_off_text,
+    fight_spawn_filled_in_text, plan_fight_bindings, plan_takeovers,
 };
 use replicant_proto::EnemyId;
 
@@ -220,21 +220,65 @@ fn roster_after_the_first_waves() -> EnemyRoster {
         roster.observe(PHASE, &wave_sightings(first, serial, &RUN34_HOST_WAVE_40));
         roster.observe(PHASE, &[]);
     }
+    roster.stop_all_waiting();
     roster
+}
+
+fn host_wave(ordinals: std::ops::Range<u16>) -> Vec<HostFightEnemy> {
+    ordinals
+        .map(|ordinal| HostFightEnemy {
+            id: id(ordinal),
+            max_hp: 10,
+            position: host_wave_position(ordinal),
+        })
+        .collect()
+}
+
+fn waiting_here(roster: &EnemyRoster, seen: &[(EnemyId, EnemySighting)]) -> Vec<WaitingFightSpawn> {
+    roster
+        .fight_waiting_spawns()
+        .into_iter()
+        .filter_map(|waiting| {
+            let (_, sighting) = seen.iter().find(|(seen_id, _)| *seen_id == waiting)?;
+            Some(WaitingFightSpawn {
+                id: waiting,
+                max_hp: sighting.max_hp,
+                position: sighting.position,
+            })
+        })
+        .collect()
 }
 
 fn bind_inside_the_window(
     roster: &mut EnemyRoster,
-    spawned: &[EnemyId],
+    seen: &[(EnemyId, EnemySighting)],
+    host_live: &[HostFightEnemy],
     taken_over: &HashSet<EnemyId>,
 ) -> Vec<(EnemyId, EnemyId)> {
-    let own: Vec<(EnemyId, u16)> = spawned
-        .iter()
-        .filter_map(|id| roster.own_arrival_of(*id).map(|arrival| (*id, arrival)))
+    let waiting = waiting_here(roster, seen);
+    let waiting_ids: HashSet<EnemyId> = waiting.iter().map(|spawn| spawn.id).collect();
+    let held_by_others: HashSet<EnemyId> = roster
+        .held_ids()
+        .into_iter()
+        .filter(|held| !waiting_ids.contains(held))
         .collect();
-    let plan = plan_fight_bindings(&own, &roster.held_ids(), &HashSet::new(), taken_over);
+    let plan = plan_fight_bindings(
+        &waiting,
+        host_live,
+        &HashSet::new(),
+        &held_by_others,
+        &HashSet::new(),
+        taken_over,
+    );
     assert!(plan.takeovers.is_empty());
-    roster.bind_ids(&plan.renames)
+    for kept in &plan.kept {
+        roster.stop_waiting(*kept);
+    }
+    let made = roster.reassign_ids(&plan.renames);
+    for (_, to) in &made {
+        roster.stop_waiting(*to);
+    }
+    made
 }
 
 fn host_wave_position(ordinal: u16) -> [f32; 3] {
@@ -274,13 +318,14 @@ fn run34_doubled_waves_inside_a_fight_window_give_one_enemy_per_host_id() {
     let mut roster = roster_after_the_first_waves();
     let taken_over = HashSet::new();
     let wave_30 = wave_sightings(9_000, 9_000, &RUN34_HOST_WAVE_30);
+    let host = host_wave(30..50);
     let update = roster.observe(PHASE, &wave_30);
-    assert!(bind_inside_the_window(&mut roster, &update.spawned, &taken_over).is_empty());
+    assert!(bind_inside_the_window(&mut roster, &update.seen, &host, &taken_over).is_empty());
     assert_eq!(update.spawned, (30..40).map(id).collect::<Vec<_>>());
     let mut both = wave_30;
     both.extend(wave_sightings(9_100, 9_100, &RUN34_HOST_WAVE_40));
     let update = roster.observe(PHASE, &both);
-    assert!(bind_inside_the_window(&mut roster, &update.spawned, &taken_over).is_empty());
+    assert!(bind_inside_the_window(&mut roster, &update.seen, &host, &taken_over).is_empty());
     let held: Vec<EnemyId> = update.seen.iter().map(|(seen_id, _)| *seen_id).collect();
     assert_eq!(
         held,
@@ -302,7 +347,12 @@ fn copies_made_before_the_window_no_longer_shift_the_replayed_waves_ids() {
     let wave_30 = wave_sightings(9_000, 9_000, &RUN34_HOST_WAVE_30);
     let mut update = roster.observe(PHASE, &wave_30);
     assert_eq!(update.spawned, (40..50).map(id).collect::<Vec<_>>());
-    let made = bind_inside_the_window(&mut roster, &update.spawned, &HashSet::new());
+    let made = bind_inside_the_window(
+        &mut roster,
+        &update.seen,
+        &host_wave(30..40),
+        &HashSet::new(),
+    );
     assert_eq!(made.len(), 10);
     update.rename(&made);
     for (seen_id, sighting) in &update.seen {
@@ -314,14 +364,30 @@ fn copies_made_before_the_window_no_longer_shift_the_replayed_waves_ids() {
     assert_eq!(next.seen.len(), 10);
 }
 
+fn waiting_at(ordinal: u16, host_ordinal: u16) -> WaitingFightSpawn {
+    WaitingFightSpawn {
+        id: id(ordinal),
+        max_hp: 10,
+        position: host_wave_position(host_ordinal),
+    }
+}
+
 #[test]
 fn a_fight_spawn_never_binds_to_an_id_held_here_or_ever_taken_over() {
-    let own = [(id(40), 30), (id(41), 31), (id(42), 32)];
-    let held: HashSet<EnemyId> = [id(30), id(40), id(41), id(42)].into_iter().collect();
+    let waiting = [waiting_at(40, 30), waiting_at(41, 31), waiting_at(42, 32)];
+    let held_by_others: HashSet<EnemyId> = [id(30)].into_iter().collect();
     let taken_over: HashSet<EnemyId> = [id(31)].into_iter().collect();
-    let plan = plan_fight_bindings(&own, &held, &HashSet::new(), &taken_over);
+    let plan = plan_fight_bindings(
+        &waiting,
+        &host_wave(30..33),
+        &HashSet::new(),
+        &held_by_others,
+        &HashSet::new(),
+        &taken_over,
+    );
     assert_eq!(plan.renames, vec![(id(42), id(32))]);
     assert!(plan.takeovers.is_empty());
+    assert!(plan.retired.is_empty(), "6:40 and 6:41 are no host ids");
 }
 
 #[test]
@@ -337,7 +403,12 @@ fn two_replayed_waves_landing_in_one_tick_each_get_their_host_ids() {
     both.extend(wave_sightings(9_100, 9_100, &RUN34_HOST_WAVE_40));
     let mut update = roster.observe(PHASE, &both);
     assert_eq!(update.spawned, (40..60).map(id).collect::<Vec<_>>());
-    let made = bind_inside_the_window(&mut roster, &update.spawned, &HashSet::new());
+    let made = bind_inside_the_window(
+        &mut roster,
+        &update.seen,
+        &host_wave(30..50),
+        &HashSet::new(),
+    );
     assert_eq!(
         made.len(),
         20,
@@ -352,23 +423,37 @@ fn two_replayed_waves_landing_in_one_tick_each_get_their_host_ids() {
 }
 
 #[test]
-fn an_id_freed_by_a_takeover_or_a_later_rename_in_the_same_tick_is_bound() {
-    let own = [
-        (id(40), 30),
-        (id(41), 31),
-        (id(50), 40),
-        (id(60), 61),
-        (id(61), 62),
+fn a_chain_and_a_swap_of_ids_are_applied_together() {
+    let mut roster = EnemyRoster::new();
+    roster.observe(PHASE, &[]);
+    for (actor, ordinal) in [(1_u64, 60_u16), (2, 61), (3, 70), (4, 71)] {
+        roster.claim(actor, 0, id(ordinal), 10);
+    }
+    let moves = [
+        (id(60), id(61)),
+        (id(61), id(62)),
+        (id(70), id(71)),
+        (id(71), id(70)),
     ];
-    let held: HashSet<EnemyId> = [30, 31, 40, 41, 50, 60, 61].into_iter().map(id).collect();
-    let copies_here: HashSet<EnemyId> = [id(30), id(31)].into_iter().collect();
-    let plan = plan_fight_bindings(&own, &held, &copies_here, &HashSet::new());
-    assert_eq!(plan.takeovers, vec![(id(40), id(30)), (id(41), id(31))]);
-    assert_eq!(
-        plan.renames,
-        vec![(id(50), id(40)), (id(61), id(62)), (id(60), id(61))],
-        "6:60 waits for 6:61 to move on, and the order is one bind_ids can apply"
+    assert_eq!(roster.reassign_ids(&moves), moves.to_vec());
+    let mut held: Vec<EnemyId> = roster.held_ids().into_iter().collect();
+    held.sort();
+    assert_eq!(held, vec![id(61), id(62), id(70), id(71)]);
+}
+
+#[test]
+fn a_move_onto_an_id_whose_holder_stays_is_skipped() {
+    let mut roster = EnemyRoster::new();
+    roster.observe(PHASE, &[]);
+    for (actor, ordinal) in [(1_u64, 50_u16), (2, 51), (3, 52)] {
+        roster.claim(actor, 0, id(ordinal), 10);
+    }
+    let moves = [(id(50), id(51)), (id(51), id(52))];
+    assert!(
+        roster.reassign_ids(&moves).is_empty(),
+        "6:52 stays, so 6:51 cannot move and 6:50 cannot follow it"
     );
+    assert_eq!(roster.held_ids().len(), 3);
 }
 
 const RUN34_MISSED_INDEX: usize = 9;
@@ -477,6 +562,7 @@ fn the_guests_late_spawn_takes_over_the_filled_in_copy_so_each_host_id_is_one_en
     let mut roster = roster_after_the_first_waves();
     let mut seen = wave_30_without_the_missed_one();
     roster.observe(PHASE, &seen);
+    roster.stop_all_waiting();
     let copy_actor = 5_035;
     roster.claim(copy_actor, 5_035, id(RUN34_MISSED_ORDINAL), 24);
     let copy = EnemySighting {
@@ -493,17 +579,18 @@ fn the_guests_late_spawn_takes_over_the_filled_in_copy_so_each_host_id_is_one_en
     assert_eq!(update.spawned.len(), 1);
     let own_id = update.spawned[0];
     assert_ne!(own_id, id(RUN34_MISSED_ORDINAL));
-    let own: Vec<(EnemyId, u16)> = update
-        .spawned
-        .iter()
-        .filter_map(|spawned| {
-            roster
-                .own_arrival_of(*spawned)
-                .map(|arrival| (*spawned, arrival))
-        })
-        .collect();
+    let waiting = waiting_here(&roster, &update.seen);
+    assert_eq!(waiting.len(), 1);
     let copies_here: HashSet<EnemyId> = [id(RUN34_MISSED_ORDINAL)].into_iter().collect();
-    let plan = plan_fight_bindings(&own, &roster.held_ids(), &copies_here, &HashSet::new());
+    let held_by_others: HashSet<EnemyId> = (30..RUN34_MISSED_ORDINAL).map(id).collect();
+    let plan = plan_fight_bindings(
+        &waiting,
+        &host_wave(30..40),
+        &HashSet::new(),
+        &held_by_others,
+        &copies_here,
+        &HashSet::new(),
+    );
     assert_eq!(plan.takeovers, vec![(own_id, id(RUN34_MISSED_ORDINAL))]);
     assert!(plan.renames.is_empty());
     assert!(roster.take_over_copy(own_id, id(RUN34_MISSED_ORDINAL)));
@@ -527,11 +614,17 @@ fn the_guests_late_spawn_takes_over_the_filled_in_copy_so_each_host_id_is_one_en
 
 #[test]
 fn a_filled_in_copy_an_own_actor_already_took_over_is_never_taken_again() {
-    let own = [(id(50), 35)];
-    let held: HashSet<EnemyId> = [id(35), id(50)].into_iter().collect();
+    let waiting = [waiting_at(50, 35)];
     let copies_here: HashSet<EnemyId> = [id(35)].into_iter().collect();
     let taken_over: HashSet<EnemyId> = [id(35)].into_iter().collect();
-    let plan = plan_fight_bindings(&own, &held, &copies_here, &taken_over);
+    let plan = plan_fight_bindings(
+        &waiting,
+        &host_wave(35..36),
+        &HashSet::new(),
+        &HashSet::new(),
+        &copies_here,
+        &taken_over,
+    );
     assert!(plan.takeovers.is_empty());
     assert!(plan.renames.is_empty());
 }

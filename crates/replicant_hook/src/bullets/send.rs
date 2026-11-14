@@ -8,6 +8,7 @@ use replicant_proto::{BULLET_EFFECT_SLOTS, Message};
 use crate::build_gate::VerifiedBuild;
 use crate::bullets::SUMMARY_INTERVAL_MS;
 use crate::diagnostics::log_line;
+use crate::kaine::sent_shot_ids;
 use crate::memory::InProcessMemory;
 use crate::net::NetSharedExt;
 use crate::net::{self, net_clock_ms};
@@ -45,9 +46,12 @@ pub fn tick_own_bullets(build: &VerifiedBuild) {
     let Ok(bullets) = bullets_of_player(game.memory(), player) else {
         return;
     };
-    for flight in sender.tracker.update(&bullets, now_ms) {
+    for mut flight in sender.tracker.update(&bullets, now_ms) {
         if flight.validate().is_err() {
             continue;
+        }
+        if let Some(look) = flight.look.as_mut() {
+            look.effect_ids = sent_shot_ids(look.effect_ids);
         }
         if let Some(look) = flight.look
             && !sender.kinds.contains(&look.effect_ids)

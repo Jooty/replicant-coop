@@ -2,8 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use nc_launcher::config::{ConfigRole, LauncherConfig, open_config_home};
-use nc_launcher_core::REPLICANT;
-use replicant_proto::PartnerBody;
+use nc_launcher_core::{LauncherScale, REPLICANT};
 use std::ffi::OsStr;
 
 use crate::scratch::fresh_dir;
@@ -15,7 +14,6 @@ fn game_folder_override_survives_a_save_and_load() {
     let config = LauncherConfig {
         game_dir: Some(PathBuf::from("/games/nier")),
         player_name: Some("Ayla".to_owned()),
-        body: PartnerBody::PrologueCharacter,
         show_distance: true,
         show_ping: false,
         keep_running: false,
@@ -29,9 +27,31 @@ fn game_folder_override_survives_a_save_and_load() {
         send_logs: false,
         install_id: Some("0123456789abcdef0123456789abcdef".to_owned()),
         game_dirs: BTreeMap::from([("made-up".to_owned(), PathBuf::from("/games/other"))]),
+        motion: false,
+        scale: LauncherScale::Large,
     };
     config.save(&path).unwrap();
     assert_eq!(LauncherConfig::load(&path), config);
+}
+
+#[test]
+fn the_scale_survives_a_restart() {
+    let dir = fresh_dir("config_scale");
+    let path = dir.join("launcher.toml");
+    let config = LauncherConfig {
+        scale: LauncherScale::Large,
+        ..LauncherConfig::default()
+    };
+    config.save(&path).unwrap();
+    assert_eq!(LauncherConfig::load(&path).scale, LauncherScale::Large);
+    assert_eq!(LauncherConfig::parse("").scale, LauncherScale::Medium);
+}
+
+#[test]
+fn motion_is_on_until_it_is_turned_off() {
+    assert!(LauncherConfig::default().motion);
+    assert!(LauncherConfig::parse("").motion);
+    assert!(!LauncherConfig::parse("motion = false").motion);
 }
 
 #[test]
@@ -119,18 +139,10 @@ fn enemy_difficulty_is_capped_when_the_game_reports_too_much() {
 }
 
 #[test]
-fn the_body_choice_survives_a_save_and_load() {
-    let mut config = LauncherConfig::default();
-    assert_eq!(config.body, PartnerBody::Nier);
+fn a_body_stored_by_an_older_launcher_is_ignored_and_dropped() {
+    let config = LauncherConfig::parse("player_name = \"Ayla\"\nbody = \"prologue\"\n");
+    assert_eq!(config.player_name.as_deref(), Some("Ayla"));
     assert!(!config.render().contains("body"));
-    config.body = PartnerBody::PrologueCharacter;
-    let loaded = LauncherConfig::parse(&config.render());
-    assert_eq!(loaded.body, PartnerBody::PrologueCharacter);
-}
-
-#[test]
-fn a_config_file_without_a_body_reads_as_nier() {
-    assert_eq!(LauncherConfig::parse("").body, PartnerBody::Nier);
 }
 
 #[test]

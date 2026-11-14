@@ -6,8 +6,10 @@ mod net_game;
 mod net_shared;
 mod net_state;
 mod net_thread;
+mod player;
 mod readiness_log;
 mod remote_player;
+mod story_partner;
 mod worker;
 
 use std::time::Duration;
@@ -19,10 +21,11 @@ pub use link_config::{
 };
 pub use link_peer::LinkPeer;
 pub use net_clock::net_clock_ms;
-pub use net_game::{LinkAccess, NetGame, NetSharedOf, SharedNetOf};
+pub use net_game::{LinkAccess, NetGame, NetSharedOf, PlayerOf, SharedNetOf};
 pub use net_shared::{NetShared, SharedNet};
 pub use net_state::NetState;
 pub use net_thread::NetThread;
+pub use player::Player;
 pub use readiness_log::log_readiness;
 pub use remote_player::RemotePlayer;
 

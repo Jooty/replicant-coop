@@ -1,54 +1,43 @@
-use eframe::egui::{self, RichText, Ui};
+use eframe::egui::{self, Rect, Ui, UiBuilder, vec2};
 
+use crate::app::motion::page_section;
+use crate::app::pages::game_row::draw_game_row;
 use crate::app::pages::lobby::session_open;
-use crate::app::style::{BAD, GOOD, MUTED, WARN};
-use crate::app::{Launcher, NetForms, heading_text};
-use crate::home::{CardTone, GameCard, card_view};
+use crate::app::parts::{DOUBLE_RULE_HEIGHT_PX, double_rule};
+use crate::app::{Launcher, NetForms, Tab};
 
-const CARD_SPACING: f32 = 12.0;
+const ROW_TO_RULE_GAP_PX: f32 = 8.0;
+const HOME_BOTTOM_EXTRA_GAP_PX: f32 = 12.0;
+const MIN_ROW_HEIGHT_PX: f32 = 300.0;
+const MIN_ROWS_SHARING_THE_PAGE: f32 = 2.0;
 
-pub(super) fn draw_home(ui: &mut Ui, launcher: &mut Launcher, forms: &NetForms) {
+pub(super) fn draw_home(ui: &mut Ui, tab: &mut Tab, launcher: &mut Launcher, forms: &mut NetForms) {
     let switch_locked = !launcher.can_switch_game() || session_open(forms);
     let cards = launcher.cards.clone();
+    // A single row takes half of the page, not all of it.
+    let count = (cards.len() as f32).max(MIN_ROWS_SHARING_THE_PAGE);
+    let between = 2.0 * ROW_TO_RULE_GAP_PX + DOUBLE_RULE_HEIGHT_PX;
+    let room = ui.available_height() - HOME_BOTTOM_EXTRA_GAP_PX - between * (count - 1.0);
+    // Every row is the same height whatever it holds.
+    let row_height = (room / count).max(MIN_ROW_HEIGHT_PX);
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            for card in &cards {
-                draw_card(ui, launcher, card, switch_locked);
-                ui.add_space(CARD_SPACING);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (index, card) in cards.iter().enumerate() {
+                if index > 0 {
+                    ui.add_space(ROW_TO_RULE_GAP_PX);
+                    double_rule(ui);
+                    ui.add_space(ROW_TO_RULE_GAP_PX);
+                }
+                let rect =
+                    Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), row_height));
+                ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+                    ui.set_min_size(rect.size());
+                    page_section(ui, index, |ui| {
+                        draw_game_row(ui, rect, tab, launcher, forms, card, switch_locked);
+                    });
+                });
             }
         });
-}
-
-fn draw_card(ui: &mut Ui, launcher: &mut Launcher, card: &GameCard, switch_locked: bool) {
-    let view = card_view(card);
-    let is_active = card.profile.game_id == launcher.profile.game_id;
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.add_enabled_ui(!view.greyed_out, |ui| {
-            ui.label(heading_text(view.title));
-            ui.colored_label(tone_color(view.found_tone), &view.found_text);
-            ui.colored_label(tone_color(view.mod_tone), &view.mod_text);
-            let blocked = !is_active && switch_locked;
-            let mut play = ui.add_enabled(view.play_enabled && !blocked, egui::Button::new("Play"));
-            if blocked {
-                play = play.on_disabled_hover_text("Finish the current game first.");
-            }
-            if play.clicked() {
-                launcher.open_game(card.profile);
-            }
-        });
-        if view.greyed_out {
-            ui.label(RichText::new("Install the game to play it here.").weak());
-        }
-    });
-}
-
-fn tone_color(tone: CardTone) -> egui::Color32 {
-    match tone {
-        CardTone::Good => GOOD,
-        CardTone::Warn => WARN,
-        CardTone::Bad => BAD,
-        CardTone::Muted => MUTED,
-    }
 }

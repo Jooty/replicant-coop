@@ -1,4 +1,4 @@
-use nc_wire::{GameMessage, RejectReason};
+use nc_wire::{GameMessage, MemberPing, RejectReason, SessionRules};
 
 use crate::transport::PeerId;
 
@@ -8,30 +8,32 @@ pub enum LeaveReason {
     TimedOut,
     ProtocolViolation,
     TransportClosed,
+    RemovedByHost,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SessionEvent<M: GameMessage> {
-    PeerJoined {
-        peer: PeerId,
-        name: String,
+    /// `peer` is the transport link the player is reached over: on a guest, always the host's.
+    PlayerJoined {
         slot: u8,
-    },
-    PeerLeft {
+        name: String,
         peer: PeerId,
+    },
+    PlayerLeft {
+        slot: u8,
         reason: LeaveReason,
-    },
-    PeerOrdered {
         peer: PeerId,
-        message: M,
     },
-    PeerRelayed {
-        peer: PeerId,
+    /// An ordered or relayed message; `from` is the sender's slot as the host stamped it.
+    Message {
+        from: u8,
         message: M,
     },
     Rejected {
         reason: RejectReason,
     },
+    RulesChanged(SessionRules),
+    MemberPings(Vec<MemberPing>),
     PeerRefused {
         peer: PeerId,
         reason: RejectReason,
@@ -45,6 +47,7 @@ impl LeaveReason {
             LeaveReason::TimedOut => "no traffic from the other player (timed out)",
             LeaveReason::ProtocolViolation => "the other player sent something invalid",
             LeaveReason::TransportClosed => "the network link closed or failed",
+            LeaveReason::RemovedByHost => "removed by the host",
         }
     }
 }

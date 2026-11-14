@@ -7,6 +7,8 @@ mod link_traffic;
 mod local_link;
 #[path = "loopback.rs"]
 mod loopback;
+#[path = "progress.rs"]
+mod progress;
 #[path = "refusal_log.rs"]
 mod refusal_log;
 #[path = "session.rs"]

@@ -10,6 +10,7 @@ pub enum PowerModelKind {
     BlackHand020,
     BlackHandAlt030,
     BlackHandAlt020,
+    Bomb010,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

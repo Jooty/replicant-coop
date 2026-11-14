@@ -189,11 +189,13 @@ fn queue_now(build: &VerifiedBuild, due: WaitingRelayCall<RelayPath>, now: u64) 
     ));
 }
 
-pub(crate) fn relay_call_popped(arguments: u64) {
+/// Notes a pop; true when it is the call this gate queued (a partner's call or a released own
+/// one), not one the game fired by itself.
+pub(crate) fn relay_call_popped(arguments: u64) -> bool {
     RELAY_CALLS
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .popped(arguments);
+        .popped(arguments)
 }
 
 pub(super) fn relay_call_cancelled(arguments: u64) {

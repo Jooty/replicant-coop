@@ -1,3 +1,3 @@
 mod relay_inbox;
 
-pub use relay_inbox::RelayInbox;
+pub use relay_inbox::{RelayInbox, Relayed};

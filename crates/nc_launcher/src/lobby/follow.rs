@@ -42,15 +42,6 @@ pub struct QuitFallback {
     ended: bool,
 }
 
-impl FollowNotice {
-    pub fn text(self) -> &'static str {
-        match self {
-            Self::YourGameClosed => "Your game closed.",
-            Self::HostGameClosed => "The host's game closed.",
-        }
-    }
-}
-
 impl QuitFallback {
     pub fn new(now_seconds: f64) -> Self {
         Self {

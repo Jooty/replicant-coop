@@ -76,7 +76,7 @@ fn button_facts(view: Option<&NetShared>) -> ButtonFacts {
 }
 
 fn far_from_partner(view: &NetShared) -> bool {
-    match (&view.local, &view.remote) {
+    match (&view.local, view.partner_state()) {
         (Some(local), Some(remote)) if local.phase == remote.state.phase => {
             leash().is_exceeded_by(distance_between(local.position, remote.state.position))
         }

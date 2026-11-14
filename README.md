@@ -32,6 +32,9 @@ Early. A full play-through isn't possible yet.
 * Cutscenes, which are vote-skipped
 * Moving between areas
 * Doors
+* Lifts, which either player can call
+* Bombs, and the walls they break
+* Minecart rides, which the host starts
 * Story progress, which follows the host
 * Checkpoint rewind, together
 * Dialog, which can be entered midway

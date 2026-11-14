@@ -4,17 +4,15 @@ use std::path::Path;
 use nc_launcher_core::GameProfile;
 use toml::{Table, Value};
 
-use replicant_proto::PartnerBody;
-
 use nc_launcher_core::{
     DEFAULT_ENEMY_DAMAGE_PERCENT, DEFAULT_ENEMY_HEALTH_PERCENT, PlayerSettings, SessionOptions,
 };
 
 use crate::game_link::{
-    BLOCK_SAVES_KEY, BODY_KEY, BOOT_SLOT_KEY, DEV_NO_FOCUS_MENU_KEY, ENEMY_DAMAGE_PERCENT_KEY,
-    ENEMY_HEALTH_PERCENT_KEY, EVENT_LOG_KEY, KEEP_RUNNING_KEY, LINK_KEY, LOG_KEY, NAME_KEY,
-    NEW_GAME_NAME_KEY, NEW_GAME_SLOT_KEY, SHOW_DISTANCE_KEY, SHOW_NAMES_KEY, SHOW_PARTY_FRAME_KEY,
-    SHOW_PING_KEY,
+    BLOCK_SAVES_KEY, BODY_KEY, BOOT_SLOT_KEY, COOP_SAVE_FILE_KEY, DEV_NO_FOCUS_MENU_KEY,
+    ENEMY_DAMAGE_PERCENT_KEY, ENEMY_HEALTH_PERCENT_KEY, EVENT_LOG_KEY, KEEP_RUNNING_KEY, LINK_KEY,
+    LOG_KEY, NAME_KEY, NEW_GAME_NAME_KEY, NEW_GAME_SLOT_KEY, SHOW_DISTANCE_KEY, SHOW_NAMES_KEY,
+    SHOW_PARTY_FRAME_KEY, SHOW_PING_KEY,
 };
 
 pub fn write_link(profile: &GameProfile, game_dir: &Path, port: u16, name: &str) -> io::Result<()> {
@@ -25,31 +23,15 @@ pub fn write_link(profile: &GameProfile, game_dir: &Path, port: u16, name: &str)
     std::fs::write(path, render(&table))
 }
 
-pub fn body_text(body: PartnerBody) -> &'static str {
-    match body {
-        PartnerBody::Nier => "nier",
-        PartnerBody::PrologueCharacter => "prologue",
-        PartnerBody::SeedNierY => "nierY",
-        PartnerBody::SeedNierF => "nierF",
-        PartnerBody::SeedKaineE => "kaine",
-    }
-}
-
 pub fn write_boot(
     profile: &GameProfile,
     game_dir: &Path,
     slot: Option<u8>,
     block_saves: bool,
-    body: Option<PartnerBody>,
 ) -> io::Result<()> {
     let path = game_dir.join(profile.link_file_name);
     let mut table = read_table(&path);
-    if let Some(body) = body {
-        table.insert(
-            BODY_KEY.to_owned(),
-            Value::String(body_text(body).to_owned()),
-        );
-    }
+    table.remove(BODY_KEY);
     match slot {
         Some(slot) => {
             table.remove(NEW_GAME_SLOT_KEY);
@@ -76,16 +58,10 @@ pub fn write_new_game(
     slot: u8,
     name: &str,
     block_saves: bool,
-    body: Option<PartnerBody>,
 ) -> io::Result<()> {
     let path = game_dir.join(profile.link_file_name);
     let mut table = read_table(&path);
-    if let Some(body) = body {
-        table.insert(
-            BODY_KEY.to_owned(),
-            Value::String(body_text(body).to_owned()),
-        );
-    }
+    table.remove(BODY_KEY);
     table.remove(BOOT_SLOT_KEY);
     table.insert(
         NEW_GAME_SLOT_KEY.to_owned(),
@@ -93,6 +69,24 @@ pub fn write_new_game(
     );
     table.insert(NEW_GAME_NAME_KEY.to_owned(), Value::String(name.to_owned()));
     set_flag(&mut table, BLOCK_SAVES_KEY, block_saves, false);
+    std::fs::write(path, render(&table))
+}
+
+/// Names the save file the game plays from, or leaves the game on its default co-op file.
+pub fn write_coop_save_file(
+    profile: &GameProfile,
+    game_dir: &Path,
+    coop_save_file: Option<&str>,
+) -> io::Result<()> {
+    let path = game_dir.join(profile.link_file_name);
+    let mut table = read_table(&path);
+    match coop_save_file {
+        Some(name) => table.insert(
+            COOP_SAVE_FILE_KEY.to_owned(),
+            Value::String(name.to_owned()),
+        ),
+        None => table.remove(COOP_SAVE_FILE_KEY),
+    };
     std::fs::write(path, render(&table))
 }
 
@@ -157,6 +151,7 @@ pub fn clear_boot(profile: &GameProfile, game_dir: &Path) -> io::Result<()> {
             NEW_GAME_SLOT_KEY,
             NEW_GAME_NAME_KEY,
             BLOCK_SAVES_KEY,
+            COOP_SAVE_FILE_KEY,
             LOG_KEY,
             KEEP_RUNNING_KEY,
             DEV_NO_FOCUS_MENU_KEY,

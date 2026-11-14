@@ -1,7 +1,4 @@
-use replicant_proto::PartnerBody;
-
-pub const HOST_CHARACTER_TOOLTIP: &str =
-    "The host plays the normal body; changing it would break sync.";
+use replicant_proto::{GUEST_BODY, HOST_BODY, PartnerBody};
 
 pub const PLAYER_TABLE_HEADERS: [&str; 4] = ["Player", "Role", "Character", "Status"];
 
@@ -25,7 +22,6 @@ pub struct RowInputs<'a> {
     pub viewer_is_guest: bool,
     pub own_name: &'a str,
     pub peer_name: Option<&'a str>,
-    pub guest_body: PartnerBody,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +30,6 @@ pub struct PlayerRow {
     pub role: PlayerRole,
     pub you: bool,
     pub body: PartnerBody,
-    pub picker: bool,
 }
 
 pub fn player_rows(inputs: RowInputs) -> Vec<PlayerRow> {
@@ -49,8 +44,7 @@ pub fn player_rows(inputs: RowInputs) -> Vec<PlayerRow> {
             name: name.to_owned(),
             role: PlayerRole::Host,
             you: !inputs.viewer_is_guest,
-            body: PartnerBody::Nier,
-            picker: false,
+            body: HOST_BODY,
         });
     }
     if let Some(name) = guest_name {
@@ -58,8 +52,7 @@ pub fn player_rows(inputs: RowInputs) -> Vec<PlayerRow> {
             name: name.to_owned(),
             role: PlayerRole::Guest,
             you: inputs.viewer_is_guest,
-            body: inputs.guest_body,
-            picker: inputs.viewer_is_guest,
+            body: GUEST_BODY,
         });
     }
     rows

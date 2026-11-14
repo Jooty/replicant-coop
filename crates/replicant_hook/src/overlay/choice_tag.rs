@@ -22,7 +22,7 @@ pub(super) fn draw_choice_tag(ui: &Ui) {
         format!("you: option {} (the host decides)", u16::from(option) + 1)
     } else if let Some(option) = tags.partner_option {
         let name = net::handle()
-            .and_then(|net| net.view().peer_name)
+            .and_then(|net| net.view().partner_name().map(str::to_owned))
             .unwrap_or_else(|| PARTNER_NAME_WHEN_UNKNOWN.to_owned());
         format!("{name}: option {}", u16::from(option) + 1)
     } else {

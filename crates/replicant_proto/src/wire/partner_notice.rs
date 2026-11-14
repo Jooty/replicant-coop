@@ -5,4 +5,5 @@ pub enum PartnerNotice {
     WantsToChangeZone,
     HostWantsToGo { phase: Option<u16> },
     RejoiningYourArea,
+    WantsToRideTheCart,
 }

@@ -4,13 +4,12 @@ use std::panic;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Mutex, PoisonError};
 
+use replicant_game::Replicant;
 use replicant_game::story_jump::{
     LevelCheck, LevelWatcher, NATIVE_ARG_FIRST_OFFSET_BYTES, NATIVE_ARG_STRIDE_BYTES,
     NATIVE_ARG_VALUE_OFFSET_BYTES, NATIVE_ARGS_HEADER_BYTES, PLAYER_UNIQUE_ACTOR_ID,
-    SAVE_BLOCK_PLAYER_LEVEL_RVA, SET_UNIQUE_ACTOR_LEVEL_NATIVE_RVA, check_level,
-    level_check_is_due, loadout_player_level,
+    SET_UNIQUE_ACTOR_LEVEL_NATIVE_RVA, check_level, level_check_is_due, loadout_player_level,
 };
-use replicant_game::{GameMemory, Replicant};
 use replicant_proto::StoryJumpPoint;
 
 use crate::build_gate::VerifiedBuild;
@@ -100,9 +99,7 @@ fn log_level_call(args_address: u64) {
 }
 
 pub(super) fn read_player_level(build: &VerifiedBuild) -> Option<i32> {
-    InProcessMemory::new(build)
-        .read_i32(build.module_base() + u64::from(SAVE_BLOCK_PLAYER_LEVEL_RVA))
-        .ok()
+    Replicant::new(InProcessMemory::new(build)).level().ok()
 }
 
 pub(super) fn log_level(build: &VerifiedBuild, when: &str) {

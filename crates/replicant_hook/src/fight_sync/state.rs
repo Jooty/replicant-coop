@@ -33,6 +33,9 @@ pub(crate) fn install(build: VerifiedBuild) {
     crate::fight_sync::object_arms::install(build);
     crate::fight_sync::prompt_follow::install(build);
     crate::fight_sync::player_waits::install(build);
+    crate::fight_sync::scripted_camera::install(build);
+    crate::fight_sync::camera_follow::install(build);
+    crate::fight_sync::eye_set_callers::install(build);
 }
 
 pub(crate) fn covers_phase(phase: u16) -> bool {
@@ -84,8 +87,7 @@ pub(super) fn here(build: &VerifiedBuild) -> Option<Here> {
     let local_phase = current_phase_index(build);
     let partner_in_same_phase = view.partner_in_play()
         && view
-            .remote
-            .as_ref()
+            .partner_state()
             .is_some_and(|remote| Some(remote.state.phase) == local_phase);
     Some(Here {
         role: FollowRole::from_slot(view.local_slot),

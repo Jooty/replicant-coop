@@ -59,7 +59,7 @@ extern "system" fn picker_detour(this: *mut c_void, cursor: *mut i32, gated: u8)
 
 fn put_partner_name_in_save() -> Option<[u8; NAME_FIELD_LEN]> {
     let build = HOOKED_BUILD.get()?;
-    let partner = handle()?.view().peer_name;
+    let partner = handle()?.view().partner_name().map(str::to_owned);
     let partner_field = diary_name(partner.as_deref())?;
     let mut game = Replicant::new(InProcessMemory::new(build));
     let owner_name = game.save_name_field().ok()?;

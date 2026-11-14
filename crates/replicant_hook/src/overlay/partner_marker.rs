@@ -99,8 +99,7 @@ pub(super) fn draw_partner_marker(ui: &Ui, game: Option<&Replicant<InProcessMemo
         ping_ms,
     );
     if let Some(note) = view
-        .remote
-        .as_ref()
+        .partner_state()
         .and_then(|remote| remote.state.activity.label())
     {
         label = format!("{label} \u{b7} {note}");
@@ -137,7 +136,7 @@ pub(super) fn shown_partner(
     view: &NetShared,
     game: &Replicant<InProcessMemory>,
 ) -> Option<ShownPartner> {
-    let remote = view.remote.as_ref();
+    let remote = view.partner_state();
     let presented = frame_for_marker();
     let camera = presented
         .map(|(frame, _)| frame.camera)

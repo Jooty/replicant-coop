@@ -501,3 +501,14 @@ fn game_over_and_continue_functions_are_restart_signals() {
 fn message_215_is_player_local() {
     assert!(PLAYER_LOCAL_MESSAGE_IDS.contains(&215));
 }
+
+#[test]
+fn the_cart_boarding_handler_runs_on_each_players_own_game() {
+    let mut handlers = MessageHandlers::new();
+    assert_eq!(
+        handlers.register(PHASE, "ChangeCam_Truck02", 239),
+        HandlerRegistered::New
+    );
+    assert!(!handlers.is_host_driven(PHASE, "ChangeCam_Truck02"));
+    assert!(handlers.is_player_local(PHASE, "ChangeCam_Truck02", &[]));
+}

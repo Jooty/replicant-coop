@@ -1,4 +1,5 @@
 use replicant_game::new_game::first_save_permitted;
+use replicant_game::save_files::CoopSaveName;
 
 use crate::boot;
 use crate::build_gate::VerifiedBuild;
@@ -25,8 +26,19 @@ pub fn install(build: VerifiedBuild) {
     player_names::install(build);
     match AutoConfig::load_beside_game() {
         Ok(Some(config)) => {
+            let mut veto_writes = config.block_saves;
             if config.link.is_some() {
-                saves::install_coop_files(build, !config.block_saves);
+                match CoopSaveName::parse(config.coop_save_file.as_deref()) {
+                    Ok(name) => saves::install_coop_files(build, name, !config.block_saves),
+                    Err(refusal) => {
+                        log_line(&format!(
+                            "saves: the link file names the co-op file {:?}, refused ({refusal}); \
+                             co-op saving is off and no save is written this session",
+                            config.coop_save_file.as_deref().unwrap_or_default()
+                        ));
+                        veto_writes = true;
+                    }
+                }
                 crate::effects::install(build);
                 crate::npcs::install(build);
                 crate::music::install(build);
@@ -48,11 +60,14 @@ pub fn install(build: VerifiedBuild) {
                 crate::cutscene_skip::install(build);
                 crate::enemies::install(build);
                 crate::enemy_bullets::install(build);
+                crate::enemy_bullets::install_script_commands(build);
                 crate::blocks::install(build);
+                crate::bombs::install(build);
+                crate::carts::install(build);
                 crate::attack_gauge::install(build);
-                crate::player_body::install(build, config.body.unwrap_or_default());
+                crate::player_body::install(build);
             }
-            if config.block_saves {
+            if veto_writes {
                 saves::install(build);
             }
             if config.keep_running || config.link.is_some() {

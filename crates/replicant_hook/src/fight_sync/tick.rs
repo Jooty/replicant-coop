@@ -60,6 +60,8 @@ pub(crate) fn tick(build: &VerifiedBuild) {
         Some(_) | None => leave_guest_stream("you are not in a session with the host"),
     }
     crate::fight_sync::prompt_follow::tick(build, here(build), &counts);
+    crate::fight_sync::scripted_camera::tick(build);
+    crate::fight_sync::camera_follow::tick(build);
 }
 
 fn split_prompt_counts(messages: Vec<Message>) -> (Vec<FightPromptCount>, Vec<Message>) {

@@ -67,7 +67,7 @@ fn partner_name_while_mirroring() -> Option<String> {
     if !(MIRRORING.load(Ordering::Acquire) || mirror_action_running()) {
         return None;
     }
-    handle()?.view().peer_name
+    handle()?.view().partner_name().map(str::to_owned)
 }
 
 #[expect(

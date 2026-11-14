@@ -314,8 +314,11 @@ fn every_jump_point_expects_level_zero() {
         StoryJumpPoint::AtShrineEntrance,
         StoryJumpPoint::AtShrineTop,
         StoryJumpPoint::AtShrineBoss,
-        StoryJumpPoint::AerieEntrance,
-        StoryJumpPoint::JunkHeapAfterFirstUpgrade,
+        StoryJumpPoint::BossFight3,
+        StoryJumpPoint::JunkHeapFloorB2,
+        StoryJumpPoint::JunkHeapBossFight5,
+        StoryJumpPoint::AfterBossFight6,
+        StoryJumpPoint::BossFight6,
     ] {
         assert_eq!(loadout_player_level(point), Some(0));
     }
@@ -352,15 +355,16 @@ fn the_level_check_waits_for_the_new_phase_to_settle() {
 }
 
 #[test]
-fn only_the_arena_jump_places_the_players_and_its_guest_stands_two_units_aside() {
+fn only_the_arena_floor_b2_and_after_boss_fight_6_jumps_place_the_players() {
     for point in [
         StoryJumpPoint::AfterPrologue,
         StoryJumpPoint::AtPopolaTalk,
         StoryJumpPoint::BeforeNextDay,
         StoryJumpPoint::AtShrineEntrance,
         StoryJumpPoint::AtShrineTop,
-        StoryJumpPoint::AerieEntrance,
-        StoryJumpPoint::JunkHeapAfterFirstUpgrade,
+        StoryJumpPoint::BossFight3,
+        StoryJumpPoint::JunkHeapBossFight5,
+        StoryJumpPoint::BossFight6,
     ] {
         assert_eq!(arrival_spot(point, true), None);
         assert_eq!(arrival_spot(point, false), None);
@@ -374,44 +378,61 @@ fn only_the_arena_jump_places_the_players_and_its_guest_stands_two_units_aside()
 }
 
 #[test]
-fn the_aerie_jump_keeps_the_whole_arena_loadout_and_ends_with_the_mp_step() {
-    let arena = loadout_steps(StoryJumpPoint::AtShrineBoss);
-    let home = loadout_steps(StoryJumpPoint::AerieEntrance);
-    let arena_without_mp = &arena[..arena.len() - 1];
-    assert_eq!(&home[..arena_without_mp.len()], arena_without_mp);
-    assert_eq!(home.last(), Some(&JumpStep::MpFullMode { on: false }));
+fn the_floor_b2_jump_places_the_host_where_the_lift_lands_and_the_guest_beside_it() {
+    let host = arrival_spot(StoryJumpPoint::JunkHeapFloorB2, true).expect("host spot");
+    let guest = arrival_spot(StoryJumpPoint::JunkHeapFloorB2, false).expect("guest spot");
+    assert_eq!((host.x, host.y, host.z), (-76.5, 4.9, -124.0));
+    assert!((guest.x + 77.1).abs() < 0.001);
+    assert_eq!((guest.y, guest.z), (host.y, host.z));
 }
 
 #[test]
-fn the_aerie_jump_leaves_the_story_flags_a_played_run_has_at_the_entrance() {
-    let steps = loadout_steps(StoryJumpPoint::AerieEntrance);
-    let mut flags = std::collections::HashMap::new();
-    let mut counters = std::collections::HashMap::new();
-    let mut snow = std::collections::HashSet::new();
-    for step in steps {
-        match step {
-            JumpStep::SetFlag { id } => {
-                flags.insert(id, true);
-            }
-            JumpStep::ClearFlag { id } => {
-                flags.insert(id, false);
-            }
-            JumpStep::SetGameCounter { id, value } => {
-                counters.insert(id, value);
-            }
-            JumpStep::SetSnowFlag { id } => {
-                snow.insert(id);
-            }
-            _ => {}
-        }
-    }
-    for id in [200, 201, 202, 217, 218, 219, 1361, 130, 195, 196, 198, 204] {
+fn the_floor_b2_jump_replays_the_lift_ride_writes_after_the_first_upgrade_state() {
+    let steps = loadout_steps(StoryJumpPoint::JunkHeapFloorB2);
+    let upgraded = steps
+        .iter()
+        .position(|step| *step == JumpStep::SetFlag { id: 1314 })
+        .expect("upgrade flag");
+    let cleared = steps
+        .iter()
+        .position(|step| *step == JumpStep::ClearFlag { id: 1314 })
+        .expect("upgrade flag cleared");
+    let lift = steps
+        .iter()
+        .position(|step| *step == JumpStep::SetFlag { id: 302 })
+        .expect("lift flag");
+    assert!(upgraded < cleared && cleared < lift);
+}
+
+#[test]
+fn the_boss_fight_3_jump_keeps_the_whole_arena_loadout_and_ends_with_the_mp_step() {
+    let arena = loadout_steps(StoryJumpPoint::AtShrineBoss);
+    let fight = loadout_steps(StoryJumpPoint::BossFight3);
+    let arena_without_mp = &arena[..arena.len() - 1];
+    assert_eq!(&fight[..arena_without_mp.len()], arena_without_mp);
+    assert_eq!(fight.last(), Some(&JumpStep::MpFullMode { on: false }));
+    assert_eq!(
+        fight
+            .iter()
+            .filter(|step| matches!(step, JumpStep::MpFullMode { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn the_boss_fight_3_jump_leaves_the_flags_that_start_the_fight_on_arrival() {
+    let (flags, counters, snow) = final_story_state(loadout_steps(StoryJumpPoint::BossFight3));
+    for id in [
+        200, 201, 202, 217, 218, 219, 1361, 130, 195, 196, 198, 204, 220, 221, 222, 224, 225, 239,
+        70, 79, 240, 241, 242, 255, 1442, 1451, 243, 1402,
+    ] {
         assert_eq!(flags.get(&id), Some(&true), "{id}");
     }
-    for id in [220, 221, 222, 224, 225, 239] {
-        assert_eq!(flags.get(&id), Some(&true), "{id}");
-    }
-    for id in [1304, 1305, 1401, 1402, 1403, 242] {
+    for id in [
+        244, 245, 246, 247, 248, 249, 374, 387, 1304, 1305, 1401, 1403, 1407, 1408, 1409, 1433,
+        1434,
+    ] {
         assert_ne!(flags.get(&id), Some(&true), "{id}");
     }
     assert_eq!(counters.get(&100), Some(&255));
@@ -420,23 +441,25 @@ fn the_aerie_jump_leaves_the_story_flags_a_played_run_has_at_the_entrance() {
 }
 
 #[test]
-fn the_aerie_jump_gives_the_spell_the_fight_gives() {
-    let steps = loadout_steps(StoryJumpPoint::AerieEntrance);
+fn the_boss_fight_3_jump_gives_the_spells_and_tutorials_the_story_gave_before_it() {
+    let steps = loadout_steps(StoryJumpPoint::BossFight3);
     for expected in [
+        JumpStep::LearnMagic { id: 3 },
         JumpStep::LearnMagic { id: 6 },
         JumpStep::SetMagicSlot { slot: 0, magic: 6 },
         JumpStep::SetTutorial { id: 2005 },
         JumpStep::SetTutorial { id: 2020 },
         JumpStep::SetTutorial { id: 2079 },
+        JumpStep::SetTutorial { id: 2014 },
     ] {
         assert!(steps.contains(&expected), "{expected:?}");
     }
-    assert!(steps.contains(&JumpStep::SetTutorial { id: 2014 }));
+    assert!(!steps.contains(&JumpStep::LearnMagic { id: 5 }));
 }
 
 #[test]
-fn the_aerie_jump_lands_at_the_first_start_point_of_the_aerie() {
-    let (name, point) = destination(StoryJumpPoint::AerieEntrance);
+fn the_boss_fight_3_jump_lands_at_the_first_start_point_of_its_area() {
+    let (name, point) = destination(StoryJumpPoint::BossFight3);
     assert_eq!(name, "A_CLIFF_VILLAGE_01");
     assert_eq!(point, 1);
     assert!(PhaseEntry::find(name).is_some());
@@ -483,11 +506,11 @@ fn final_story_state(
 }
 
 #[test]
-fn the_junk_heap_jump_keeps_the_whole_aerie_loadout_and_ends_with_the_mp_step() {
-    let aerie = loadout_steps(StoryJumpPoint::AerieEntrance);
-    let junk_heap = loadout_steps(StoryJumpPoint::JunkHeapAfterFirstUpgrade);
-    let aerie_without_mp = &aerie[..aerie.len() - 1];
-    assert_eq!(&junk_heap[..aerie_without_mp.len()], aerie_without_mp);
+fn the_junk_heap_jump_keeps_the_whole_boss_fight_3_loadout_and_ends_with_the_mp_step() {
+    let fight = loadout_steps(StoryJumpPoint::BossFight3);
+    let junk_heap = loadout_steps(StoryJumpPoint::JunkHeapFloorB2);
+    let fight_without_mp = &fight[..fight.len() - 1];
+    assert_eq!(&junk_heap[..fight_without_mp.len()], fight_without_mp);
     assert_eq!(junk_heap.last(), Some(&JumpStep::MpFullMode { on: false }));
     assert_eq!(
         junk_heap
@@ -499,17 +522,17 @@ fn the_junk_heap_jump_keeps_the_whole_aerie_loadout_and_ends_with_the_mp_step() 
 }
 
 #[test]
-fn the_junk_heap_jump_leaves_the_story_flags_a_played_run_has_after_the_first_upgrade() {
-    let (flags, counters, snow) =
-        final_story_state(loadout_steps(StoryJumpPoint::JunkHeapAfterFirstUpgrade));
+fn the_junk_heap_jump_leaves_the_story_flags_a_played_run_has_on_floor_b2() {
+    let (flags, counters, snow) = final_story_state(loadout_steps(StoryJumpPoint::JunkHeapFloorB2));
     for id in [
         70, 79, 129, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 253, 255, 256, 281, 282,
-        283, 284, 285, 286, 287, 288, 290, 291, 292, 301, 1314,
+        283, 284, 285, 286, 287, 288, 290, 291, 292, 301, 302,
     ] {
         assert_eq!(flags.get(&id), Some(&true), "{id}");
     }
     for id in [
-        1401, 1402, 1403, 1405, 1407, 1408, 1409, 1432, 1433, 1434, 1442, 1451, 137, 252, 1317,
+        1401, 1402, 1403, 1404, 1405, 1406, 1407, 1408, 1409, 1432, 1433, 1434, 1442, 1451, 137,
+        252, 1317, 1314,
     ] {
         assert_ne!(flags.get(&id), Some(&true), "{id}");
     }
@@ -517,12 +540,12 @@ fn the_junk_heap_jump_leaves_the_story_flags_a_played_run_has_after_the_first_up
     assert_eq!(counters.get(&101), Some(&255));
     assert!(snow.contains(&1085));
     assert!(snow.contains(&1051));
-    assert!(!snow.contains(&5));
+    assert!(snow.contains(&5));
 }
 
 #[test]
 fn the_junk_heap_jump_leaves_out_the_side_quest_flags_and_counters() {
-    let steps = loadout_steps(StoryJumpPoint::JunkHeapAfterFirstUpgrade);
+    let steps = loadout_steps(StoryJumpPoint::JunkHeapFloorB2);
     for step in &steps {
         match step {
             JumpStep::SetFlag { id } | JumpStep::ClearFlag { id } => {
@@ -539,7 +562,7 @@ fn the_junk_heap_jump_leaves_out_the_side_quest_flags_and_counters() {
 
 #[test]
 fn the_junk_heap_jump_gives_the_items_the_story_gave_and_the_upgraded_weapon() {
-    let steps = loadout_steps(StoryJumpPoint::JunkHeapAfterFirstUpgrade);
+    let steps = loadout_steps(StoryJumpPoint::JunkHeapFloorB2);
     for expected in [
         JumpStep::SetItem { id: 1009, count: 1 },
         JumpStep::SetItem { id: 1109, count: 1 },
@@ -568,9 +591,178 @@ fn the_junk_heap_jump_gives_the_items_the_story_gave_and_the_upgraded_weapon() {
 }
 
 #[test]
-fn the_junk_heap_jump_lands_on_the_second_start_point_of_the_mountain_field() {
-    let (name, point) = destination(StoryJumpPoint::JunkHeapAfterFirstUpgrade);
-    assert_eq!(name, "A_MOUNT_FIELD_01");
-    assert_eq!(point, 2);
+fn the_junk_heap_jump_lands_on_the_first_start_point_of_the_second_robot_floor() {
+    let (name, point) = destination(StoryJumpPoint::JunkHeapFloorB2);
+    assert_eq!(name, "A_MOUNT_ROBOT_02");
+    assert_eq!(point, 1);
+    assert!(PhaseEntry::find(name).is_some());
+}
+
+#[test]
+fn the_boss_fight_5_jump_keeps_the_floor_b2_loadout_and_ends_with_the_mp_step() {
+    let floor = loadout_steps(StoryJumpPoint::JunkHeapFloorB2);
+    let fight = loadout_steps(StoryJumpPoint::JunkHeapBossFight5);
+    let floor_without_mp = &floor[..floor.len() - 1];
+    assert_eq!(&fight[..floor_without_mp.len()], floor_without_mp);
+    assert_eq!(fight.last(), Some(&JumpStep::MpFullMode { on: false }));
+    assert_eq!(
+        fight
+            .iter()
+            .filter(|step| matches!(step, JumpStep::MpFullMode { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn the_boss_fight_5_jump_leaves_the_flags_and_tutorials_the_bomb_and_truck_stretch_sets() {
+    let steps = loadout_steps(StoryJumpPoint::JunkHeapBossFight5);
+    let (flags, _, snow) = final_story_state(steps.clone());
+    for id in [302, 303, 304, 305, 313, 314, 315] {
+        assert_eq!(flags.get(&id), Some(&true), "{id}");
+    }
+    for id in [1401, 1402, 1403, 1404, 1405, 1406, 1407, 1314] {
+        assert_ne!(flags.get(&id), Some(&true), "{id}");
+    }
+    assert!(snow.contains(&5));
+    for id in [2050, 2052] {
+        assert!(steps.contains(&JumpStep::SetTutorial { id }), "{id}");
+    }
+    assert!(!steps.contains(&JumpStep::SetTutorial { id: 2019 }));
+}
+
+#[test]
+fn the_boss_fight_5_jump_arrives_at_the_first_start_point_of_the_last_robot_floor() {
+    let (name, point) = destination(StoryJumpPoint::JunkHeapBossFight5);
+    assert_eq!(name, "A_MOUNT_ROBOT_10");
+    assert_eq!(point, 1);
+    assert!(PhaseEntry::find(name).is_some());
+}
+
+#[test]
+fn the_after_boss_fight_6_jump_keeps_the_boss_fight_5_loadout_and_ends_with_the_mp_step() {
+    let earlier = loadout_steps(StoryJumpPoint::JunkHeapBossFight5);
+    let after = loadout_steps(StoryJumpPoint::AfterBossFight6);
+    let earlier_without_mp = &earlier[..earlier.len() - 1];
+    assert_eq!(&after[..earlier_without_mp.len()], earlier_without_mp);
+    assert_eq!(after.last(), Some(&JumpStep::MpFullMode { on: false }));
+    assert_eq!(
+        after
+            .iter()
+            .filter(|step| matches!(step, JumpStep::MpFullMode { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn the_after_boss_fight_6_jump_leaves_the_flags_a_played_run_has_after_the_ending_scene() {
+    let (flags, counters, snow) = final_story_state(loadout_steps(StoryJumpPoint::AfterBossFight6));
+    for id in [
+        102, 306, 307, 308, 309, 132, 310, 311, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383,
+        384, 385, 386, 387, 125, 128, 248, 249, 1409,
+    ] {
+        assert_eq!(flags.get(&id), Some(&true), "{id}");
+    }
+    for id in [
+        1307, 1308, 1309, 1310, 1401, 1402, 1403, 1404, 1405, 1406, 1407, 1408, 1410, 1411,
+    ] {
+        assert_ne!(flags.get(&id), Some(&true), "{id}");
+    }
+    assert_eq!(counters.get(&100), Some(&255));
+    assert_eq!(counters.get(&101), Some(&255));
+    assert!(snow.contains(&1056));
+    assert!(!snow.contains(&1061));
+    assert!(!counters.contains_key(&200));
+}
+
+#[test]
+fn the_after_boss_fight_6_jump_gives_the_spells_and_tutorials_of_both_fight_endings() {
+    let steps = loadout_steps(StoryJumpPoint::AfterBossFight6);
+    for expected in [
+        JumpStep::LearnMagic { id: 8 },
+        JumpStep::LearnMagic { id: 4 },
+        JumpStep::SetTutorial { id: 2007 },
+        JumpStep::SetTutorial { id: 2003 },
+    ] {
+        assert!(steps.contains(&expected), "{expected:?}");
+    }
+}
+
+#[test]
+fn the_after_boss_fight_6_jump_lands_in_the_area_of_the_fight() {
+    let (name, point) = destination(StoryJumpPoint::AfterBossFight6);
+    assert_eq!(name, "A_CLIFF_VILLAGE_01");
+    assert_eq!(point, 1);
+    assert!(PhaseEntry::find(name).is_some());
+}
+
+#[test]
+fn the_after_boss_fight_6_jump_places_the_host_where_the_ending_scene_leaves_it_and_the_guest_beside_it()
+ {
+    let host = arrival_spot(StoryJumpPoint::AfterBossFight6, true).expect("host spot");
+    let guest = arrival_spot(StoryJumpPoint::AfterBossFight6, false).expect("guest spot");
+    assert_eq!((host.x, host.y, host.z), (26.25, 30.61, 107.67));
+    assert!((guest.x - host.x - 1.5).abs() < 0.001);
+    assert_eq!((guest.y, guest.z), (host.y, host.z));
+}
+
+#[test]
+fn the_boss_fight_6_jump_keeps_the_boss_fight_5_loadout_and_ends_with_the_mp_step() {
+    let earlier = loadout_steps(StoryJumpPoint::JunkHeapBossFight5);
+    let fight = loadout_steps(StoryJumpPoint::BossFight6);
+    let earlier_without_mp = &earlier[..earlier.len() - 1];
+    assert_eq!(&fight[..earlier_without_mp.len()], earlier_without_mp);
+    assert_eq!(fight.last(), Some(&JumpStep::MpFullMode { on: false }));
+    assert_eq!(
+        fight
+            .iter()
+            .filter(|step| matches!(step, JumpStep::MpFullMode { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn the_after_boss_fight_6_jump_is_the_boss_fight_6_loadout_plus_the_fight() {
+    let fight = loadout_steps(StoryJumpPoint::BossFight6);
+    let after = loadout_steps(StoryJumpPoint::AfterBossFight6);
+    let fight_without_mp = &fight[..fight.len() - 1];
+    assert_eq!(&after[..fight_without_mp.len()], fight_without_mp);
+    assert_eq!(after.len(), fight.len() + 50);
+}
+
+#[test]
+fn the_boss_fight_6_jump_leaves_the_flags_that_make_the_area_start_run_the_approach_to_the_fight() {
+    let (flags, counters, snow) = final_story_state(loadout_steps(StoryJumpPoint::BossFight6));
+    for id in [102, 306, 307, 308, 309, 310, 311, 132, 374, 248, 249] {
+        assert_eq!(flags.get(&id), Some(&true), "{id}");
+    }
+    for id in [
+        375, 376, 377, 378, 379, 380, 381, 382, 383, 384, 385, 386, 387, 1307, 1308, 1309, 1310,
+        1401, 1402, 1403, 1404, 1405, 1406, 1407, 1408, 1409, 1410, 1411, 125,
+    ] {
+        assert_ne!(flags.get(&id), Some(&true), "{id}");
+    }
+    assert_eq!(counters.get(&100), Some(&255));
+    assert_eq!(counters.get(&101), Some(&255));
+    assert!(snow.contains(&1056));
+    assert!(!counters.contains_key(&200));
+}
+
+#[test]
+fn the_boss_fight_6_jump_gives_the_spell_of_boss_fight_5_but_not_the_one_after_boss_fight_6() {
+    let steps = loadout_steps(StoryJumpPoint::BossFight6);
+    assert!(steps.contains(&JumpStep::LearnMagic { id: 8 }));
+    assert!(steps.contains(&JumpStep::SetTutorial { id: 2007 }));
+    assert!(!steps.contains(&JumpStep::LearnMagic { id: 4 }));
+    assert!(!steps.contains(&JumpStep::SetTutorial { id: 2003 }));
+}
+
+#[test]
+fn the_boss_fight_6_jump_enters_the_area_at_the_point_the_field_exit_uses() {
+    let (name, point) = destination(StoryJumpPoint::BossFight6);
+    assert_eq!(name, "A_CLIFF_VILLAGE_01");
+    assert_eq!(point, 1);
     assert!(PhaseEntry::find(name).is_some());
 }

@@ -16,10 +16,13 @@ pub fn detect_game(profile: &'static GameProfile, config: &LauncherConfig) -> Op
     if let Some(game_dir) = config.game_dir_for(profile).filter(|dir| dir.is_dir()) {
         return Some(install_from_game_dir(profile, game_dir));
     }
+    find_game(profile, &steam_roots())
+}
+
+/// Every place a Steam install may live on this PC: the registry's path on Windows, then the usual folders.
+pub fn steam_roots() -> Vec<PathBuf> {
     let registry_path = read_registry_steam_path();
-    let roots: Vec<PathBuf> =
-        candidate_steam_roots(dirs::home_dir().as_deref(), registry_path.as_deref());
-    find_game(profile, &roots)
+    candidate_steam_roots(dirs::home_dir().as_deref(), registry_path.as_deref())
 }
 
 pub fn read_registry_steam_path() -> Option<String> {

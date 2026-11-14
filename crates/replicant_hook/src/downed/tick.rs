@@ -117,7 +117,7 @@ pub fn tick_downed(build: &VerifiedBuild) {
         &effects,
     );
     resolve_pending(build, &mut game, &mut runtime.owned, &mut runtime.pending);
-    let partner_name = view.peer_name.as_deref().unwrap_or("The other player");
+    let partner_name = view.partner_name().unwrap_or("The other player");
     resolve_rewind_and_backup(build, runtime, &mut game, dt_seconds, net, partner_name);
     maintain_endure(runtime, &mut game, session_active);
     let wanted_lock = session_active && runtime.rules.locks_controls();
@@ -125,7 +125,7 @@ pub fn tick_downed(build: &VerifiedBuild) {
     announce_changes(
         &mut runtime.announced,
         (runtime.rules.local(), runtime.rules.partner()),
-        view.peer_name.as_deref().unwrap_or("The other player"),
+        view.partner_name().unwrap_or("The other player"),
     );
     publish(DownedStatus {
         session_active,
@@ -221,7 +221,7 @@ fn maintain_endure(
 
 fn partner_distance(view: &NetShared) -> Option<f32> {
     let local = view.local.as_ref()?;
-    let remote = view.remote.as_ref()?;
+    let remote = view.partner_state()?;
     if remote.age() > PARTNER_STATE_MAX_AGE || remote.state.phase != local.phase {
         return None;
     }

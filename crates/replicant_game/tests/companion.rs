@@ -142,6 +142,7 @@ fn a_companions_wire_state_is_a_valid_enemy_state() {
         part: 0,
         parts: 1,
         total: 1,
+        round: 1,
         enemies: vec![state],
     };
     assert!(encode(&Message::EnemySnapshot(snapshot)).is_ok());

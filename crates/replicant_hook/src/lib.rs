@@ -5,11 +5,15 @@ mod attack_gauge;
 #[cfg(windows)]
 mod blocks;
 #[cfg(windows)]
+mod bombs;
+#[cfg(windows)]
 mod boot;
 #[cfg(windows)]
 mod boss_messages;
 #[cfg(windows)]
 mod bullets;
+#[cfg(windows)]
+mod carts;
 #[cfg(windows)]
 mod containers;
 #[cfg(windows)]
@@ -43,6 +47,8 @@ mod game_hooks;
 mod gimmick_probe;
 #[cfg(windows)]
 mod kaine;
+#[cfg(windows)]
+mod lift_rides;
 #[cfg(windows)]
 mod minimap;
 #[cfg(windows)]

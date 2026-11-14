@@ -4,6 +4,7 @@ use replicant_proto::{
 
 use crate::bullet_flights::{SightedBullet, partner_effect_id};
 use crate::effects::{effect_instance_address, read_anchor_offset};
+use crate::enemy_bullets::SCRIPT_BULLET_LASER_FLAG_OFFSET;
 use crate::memory::GameMemory;
 use crate::offsets::{
     ACTOR_TRANSFORM_BLOCK_BYTES, ACTOR_TRANSFORM_BLOCK_OFFSET, BULLET_SECONDS_BEFORE_START_OFFSET,
@@ -25,6 +26,15 @@ const TRANSLATION_COLUMN: usize = 3;
 pub enum NotCopyable {
     SpriteNotDrawn,
     NoEffect,
+}
+
+/// Why a script bullet with no effect to copy cannot be shown, read again for the host's log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum UncopiedWhy {
+    NoEffectObject,
+    UnknownEffectObject { vtable_rva: u32 },
+    EffectIdOutOfRange { effect_id: i32 },
+    EffectGone { effect_id: i32 },
 }
 
 /// A script bullet is drawn by one effect object: a looping effect made by id, shown again from
@@ -55,6 +65,41 @@ pub fn read_script_bullet<M: GameMemory>(
     read_looping_effect(memory, actor, object, slot)
         .map(|bullet| (bullet, None))
         .ok_or(NotCopyable::NoEffect)
+}
+
+/// The reason `read_script_bullet` found nothing to copy, for a bullet it refused with `NoEffect`.
+pub fn why_not_copied<M: GameMemory>(memory: &M, actor: u64) -> UncopiedWhy {
+    let Some(object) = memory
+        .read_u64(actor + SCRIPT_BULLET_EFFECT_OBJECT_POINTER_OFFSET)
+        .ok()
+        .filter(|object| *object != 0)
+    else {
+        return UncopiedWhy::NoEffectObject;
+    };
+    let class = memory.read_u64(object).unwrap_or(0);
+    let base = memory.module_base();
+    if class != base + u64::from(SCRIPT_BULLET_LOOP_EFFECT_VTABLE_RVA)
+        && class != base + u64::from(SCRIPT_BULLET_TO_SENIOR_EFFECT_VTABLE_RVA)
+    {
+        let vtable_rva = u32::try_from(class.wrapping_sub(base)).unwrap_or(u32::MAX);
+        return UncopiedWhy::UnknownEffectObject { vtable_rva };
+    }
+    let effect_id = memory
+        .read_i32(object + SCRIPT_BULLET_EFFECT_OBJECT_EFFECT_ID_OFFSET)
+        .unwrap_or(-1);
+    if partner_effect_id(effect_id).is_none() {
+        UncopiedWhy::EffectIdOutOfRange { effect_id }
+    } else {
+        UncopiedWhy::EffectGone { effect_id }
+    }
+}
+
+/// The game marks a script bullet spawned from the bullet script named `laser` with a zero
+/// byte the bullet base sets to one.
+pub fn script_bullet_is_laser<M: GameMemory>(memory: &M, actor: u64) -> bool {
+    memory
+        .read_u8(actor + SCRIPT_BULLET_LASER_FLAG_OFFSET)
+        .is_ok_and(|flag| flag == 0)
 }
 
 fn read_sprite<M: GameMemory>(

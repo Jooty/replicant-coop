@@ -10,15 +10,25 @@ autotests = false
 name = "all"
 path = "tests/all.rs"
 
+[[test]]
+name = "menu_snapshots"
+path = "tests/menu_snapshots.rs"
+required-features = ["snapshots"]
+
 [dependencies]
 nc_wire = { workspace = true }
 nc_net = { workspace = true }
 nc_ui_style = { workspace = true }
+imgui = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 hudhook = { workspace = true }
 minhook = { workspace = true }
 windows-sys = { workspace = true }
+
+[features]
+snapshots = ["dep:image"]
 
 [dev-dependencies]
 serde = { workspace = true }

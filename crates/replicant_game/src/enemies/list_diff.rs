@@ -11,6 +11,7 @@ pub enum LocalKeep {
     WaitingHostKill,
     HostEnded,
     HostListIncomplete,
+    OutsideHostRound,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -33,6 +34,7 @@ impl LocalKeep {
             Self::WaitingHostKill => "the host's kill of it is on its way",
             Self::HostEnded => "the host ended it, the copy is still here",
             Self::HostListIncomplete => "kept, the host's list is not complete yet",
+            Self::OutsideHostRound => "kept, the host has it but left it out of its round",
         }
     }
 }

@@ -101,6 +101,6 @@ fn host_sends_game_over() {
     log_line("rewind: host restored its checkpoint after a game over, sent it to the guest");
     post_event(&format!(
         "{} goes back with you",
-        view.peer_name.as_deref().unwrap_or("The other player")
+        view.partner_name().unwrap_or("The other player")
     ));
 }

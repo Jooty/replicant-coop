@@ -11,26 +11,32 @@ use replicant_game::GameMemory;
 use replicant_game::boss_messages::held_hp_to_restore;
 use replicant_game::effects::{projectile_kind, projectile_owner, read_actor_position};
 use replicant_game::enemies::{
-    AggroTarget, AttackRecord, EnemyHitLogLimiter, GUEST_HIT_REPEAT_WINDOW_MS, OwnHitInputs,
-    OwnHitLimiter, OwnHitRecord, PlayerHitGuard, companion_hit_counts, own_hit_text, pack_hit_kind,
-    restored_time_scale, scaled_hp_damage, spec_class_of,
+    AggroTarget, AttackRecord, EnemyHitLogLimiter, GUEST_HIT_REPEAT_WINDOW_MS, HitReaction,
+    OwnHitInputs, OwnHitLimiter, OwnHitRecord, PlayerHitGuard, companion_hit_counts,
+    credited_enemy, own_hit_text, pack_hit_kind, restored_time_scale, scaled_hp_damage,
+    spec_class_of,
 };
+use replicant_game::enemy_bullets::bullet_owner;
 use replicant_game::offsets::BODY_MOTION_LAYER;
 use replicant_game::offsets::{
     ACTOR_TIME_SCALE_OFFSET, ATTACK_FLAG_MAGIC, ATTACK_RECORD_ATTACK_KIND_OFFSET,
-    ATTACK_RECORD_HP_DAMAGE_OFFSET, ATTACK_RECORD_SOURCE_CLASS_OFFSET,
+    ATTACK_RECORD_FLAGS_OFFSET, ATTACK_RECORD_HIT_DIRECTION_OFFSET, ATTACK_RECORD_HP_DAMAGE_OFFSET,
+    ATTACK_RECORD_PUSH_STRENGTH_OFFSET, ATTACK_RECORD_SOURCE_CLASS_OFFSET,
     RECEIVE_ATTACK_QUERY_FUNCTION_RVA,
 };
 use replicant_game::puppet::{body_info, motion_name, read_layer_motion};
 use replicant_proto::{EnemyHit, EnemyId, MAX_HIT_DAMAGE, Message, PlayerHit};
 
+use crate::bombs::is_own_bomb_hit;
 use crate::boss_messages::is_boss;
 use crate::build_gate::VerifiedBuild;
 use crate::diagnostics::log_line;
 use crate::effects::{begin_own_hit, end_own_hit};
 use crate::enemies::EnemySyncRole;
 use crate::enemies::boss_hit_log::log_host_boss_hit;
-use crate::enemies::combat_view::{CombatView, applying_remote, take_pending_hit_kind, with_view};
+use crate::enemies::combat_view::{
+    CombatView, applying_remote, take_pending_hit_kind, take_pending_hit_reaction, with_view,
+};
 use crate::enemies::counters::{HookCount, count};
 use crate::enemies::enemy_id_text;
 use crate::enemies::game_calls::EnemyCalls;
@@ -62,6 +68,13 @@ type ReceiveAttackQuery =
 enum HitRoute {
     Run,
     Drop,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CreditedAttacker {
+    actor: u64,
+    enemy: EnemyId,
+    by_bullet: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -105,6 +118,11 @@ extern "system" fn receive_attack_query_detour(
     part: i32,
     force: u8,
 ) -> u64 {
+    if let Some(build) = HOOKED_BUILD.get() {
+        let _ = panic::catch_unwind(|| {
+            crate::kaine::note_hit_for_companion_off(build, victim as u64, record as u64);
+        });
+    }
     let route = if applying_remote() {
         HitRoute::Run
     } else {
@@ -122,6 +140,7 @@ extern "system" fn receive_attack_query_detour(
     }
     if applying_remote() {
         let _ = panic::catch_unwind(|| write_pending_hit_kind(record as u64));
+        let _ = panic::catch_unwind(|| write_pending_hit_reaction(record as u64));
     }
     let scale_before = panic::catch_unwind(|| struck_copy_time_scale(victim as u64))
         .ok()
@@ -171,6 +190,28 @@ fn write_pending_hit_kind(record: u64) {
     let _ = memory.write_i32(record + ATTACK_RECORD_ATTACK_KIND_OFFSET, kind);
     if let Some(class) = source_class {
         let _ = memory.write_i32(record + ATTACK_RECORD_SOURCE_CLASS_OFFSET, class);
+    }
+}
+
+fn write_pending_hit_reaction(record: u64) {
+    let Some(reaction) = take_pending_hit_reaction() else {
+        return;
+    };
+    let Some(build) = HOOKED_BUILD.get() else {
+        return;
+    };
+    let mut memory = InProcessMemory::new(build);
+    let Ok(flags) = memory.read_i32(record + ATTACK_RECORD_FLAGS_OFFSET) else {
+        return;
+    };
+    let flags = reaction.flags_for_direct_hit(flags.cast_unsigned());
+    let _ = memory.write_i32(record + ATTACK_RECORD_FLAGS_OFFSET, flags.cast_signed());
+    let _ = memory.write_f32(record + ATTACK_RECORD_PUSH_STRENGTH_OFFSET, reaction.push);
+    for (axis, value) in (0_u64..).zip(reaction.direction) {
+        let _ = memory.write_f32(
+            record + ATTACK_RECORD_HIT_DIRECTION_OFFSET + axis * 4,
+            value,
+        );
     }
 }
 
@@ -325,10 +366,13 @@ fn guest_route(build: &VerifiedBuild, view: &CombatView, victim: u64, record: u6
             (view.local_player, id),
         );
         let fired_by_local = sources.contains(&Some(view.local_player))
-            || bullet_of_local == Some(view.local_player);
+            || bullet_of_local == Some(view.local_player)
+            || is_own_bomb_hit(attack.hit_id);
         if view.local_player != 0 && fired_by_local {
             begin_own_hit();
             log_own_hit(build, view, &attack);
+            let attack =
+                crate::kaine::hit_at_first_body_power(build, view.local_player, record, attack);
             if id.is_companion() {
                 // Sent after the game's own answer, and only when the hit lowered its life here.
                 OWN_HIT_ON_COMPANION.with(|pending| {
@@ -445,13 +489,10 @@ fn log_enemy_hit_on_player(build: &VerifiedBuild, view: &CombatView, victim: u64
     let Some(attack) = AttackRecord::read(&memory, record) else {
         return;
     };
-    let Some((attacker_actor, attacker)) = attack.sources(&memory).iter().find_map(|source| {
-        view.is_enemy(*source)
-            .zip(*source)
-            .map(|(id, actor)| (actor, id))
-    }) else {
+    let Some(credit) = credited_attacker(&memory, view, &attack) else {
         return;
     };
+    let (attacker_actor, attacker) = (credit.actor, credit.enemy);
     let now_ms = u64::try_from(BODY_SWING_CLOCK.elapsed().as_millis()).unwrap_or(u64::MAX);
     if !ENEMY_HIT_LOGS
         .lock()
@@ -474,9 +515,14 @@ fn log_enemy_hit_on_player(build: &VerifiedBuild, view: &CombatView, victim: u64
         )
     };
     log_line(&format!(
-        "combat: hit by {} on {victim_text} (hp {}): target {target}, attacker {}, host {}, puppet {}",
+        "combat: hit by {} on {victim_text} (hp {}, {}): target {target}, attacker {}, host {}, puppet {}",
         enemy_id_text(attacker),
         attack.hp_damage,
+        if credit.by_bullet {
+            "by its bullet"
+        } else {
+            "by its body"
+        },
         at(attacker_actor),
         if view.local_player != 0 {
             at(view.local_player)
@@ -508,13 +554,10 @@ fn host_watch(build: &VerifiedBuild, view: &CombatView, victim: u64, record: u64
     let Some(attack) = AttackRecord::read(&memory, record) else {
         return;
     };
-    let Some(attacker) = attack
-        .sources(&memory)
-        .iter()
-        .find_map(|source| view.is_enemy(*source))
-    else {
+    let Some(credit) = credited_attacker(&memory, view, &attack) else {
         return;
     };
+    let attacker = credit.enemy;
     let Some(net) = net::handle() else {
         return;
     };
@@ -526,6 +569,11 @@ fn host_watch(build: &VerifiedBuild, view: &CombatView, victim: u64, record: u64
     if !counts {
         return;
     }
+    let reaction = HitReaction::read(&memory, record).unwrap_or(HitReaction {
+        flags: attack.flags,
+        push: 0.0,
+        direction: [0.0; 3],
+    });
     let hit = PlayerHit {
         phase: view.phase,
         attacker,
@@ -536,18 +584,30 @@ fn host_watch(build: &VerifiedBuild, view: &CombatView, victim: u64, record: u64
         flags: attack.flags,
         attack_kind: attack.attack_kind.cast_unsigned(),
         hit_id: attack.hit_id,
+        push: reaction.push,
+        direction: reaction.direction,
     };
     net.send_relayed(Message::PlayerHit(hit));
     count(HookCount::PlayerHitSent);
     log_line(&format!(
-        "combat: {} hit the guest's body: hp {} (was {}, +{}%), flags {:#x}, kind {}, hit id {} (sent)",
+        "combat: {} hit the guest's body{}: hp {} (was {}, +{}%), flags {:#x}, kind {}, hit id {}, reaction kind {}, push {:.2}, direction ({:.2}, {:.2}, {:.2}) (sent)",
         enemy_id_text(attacker),
+        if credit.by_bullet {
+            " with a bullet"
+        } else {
+            ""
+        },
         hit.hp_damage,
         attack.hp_damage,
         view.enemy_damage_bonus_percent,
         hit.flags,
         hit.attack_kind,
-        attack.hit_id
+        attack.hit_id,
+        reaction.kind(),
+        hit.push,
+        hit.direction[0],
+        hit.direction[1],
+        hit.direction[2]
     ));
 }
 
@@ -559,10 +619,7 @@ fn scale_enemy_hit_on_host(build: &VerifiedBuild, view: &CombatView, record: u64
     let Some(attack) = AttackRecord::read(&memory, record) else {
         return;
     };
-    let Some(attacker) = attack
-        .sources(&memory)
-        .iter()
-        .find_map(|source| view.is_enemy(*source))
+    let Some(attacker) = credited_attacker(&memory, view, &attack).map(|credit| credit.enemy)
     else {
         return;
     };
@@ -581,6 +638,21 @@ fn scale_enemy_hit_on_host(build: &VerifiedBuild, view: &CombatView, record: u64
         view.enemy_damage_bonus_percent,
         attack.hit_id
     ));
+}
+
+fn credited_attacker(
+    memory: &InProcessMemory,
+    view: &CombatView,
+    attack: &AttackRecord,
+) -> Option<CreditedAttacker> {
+    let sources = attack.sources(memory);
+    let owner = sources[0].and_then(|attacker| bullet_owner(memory, attacker));
+    let (actor, enemy) = credited_enemy(sources, owner, |actor| view.enemies.get(&actor).copied())?;
+    Some(CreditedAttacker {
+        actor,
+        enemy,
+        by_bullet: !sources.contains(&Some(actor)),
+    })
 }
 
 fn actor_hp(build: &VerifiedBuild, actor: u64) -> Option<i32> {

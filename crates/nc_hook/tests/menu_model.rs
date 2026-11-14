@@ -18,6 +18,7 @@ impl GameMenu for MadeUpGame {
     fn co_op_status(&self) -> CoOpStatus {
         CoOpStatus {
             link: "connected".to_owned(),
+            connected: true,
             players: self.players.clone(),
             ping_ms: Some(40),
         }

@@ -28,6 +28,7 @@ pub(super) fn call_native(build: &VerifiedBuild, rva: u32, integers: &[i32]) {
     reason = "calls a game script native at its verified address with a hand-built argument block"
 )]
 pub(crate) fn call_native_with(build: &VerifiedBuild, rva: u32, arguments: &[NativeArg]) {
+    crate::teleport::note_mod_move();
     let bytes = NATIVE_ARGS_HEADER_BYTES
         + NATIVE_ARG_FIRST_OFFSET_BYTES
         + arguments.len() * NATIVE_ARG_STRIDE_BYTES

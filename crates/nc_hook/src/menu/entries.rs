@@ -45,6 +45,7 @@ pub struct PlayerLine {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CoOpStatus {
     pub link: String,
+    pub connected: bool,
     pub players: Vec<PlayerLine>,
     pub ping_ms: Option<u32>,
 }

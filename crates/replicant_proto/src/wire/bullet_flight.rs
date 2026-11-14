@@ -7,7 +7,7 @@ pub const BULLET_EFFECT_SLOTS: usize = 4;
 pub const BULLET_TRANSFORM_FLOATS: usize = 12;
 pub const BULLET_STYLE_FLOATS: usize = 8;
 pub const MAX_BULLET_EFFECT_ID: i32 = 0x3FFF;
-pub const MAX_BULLET_AXIS_ABS: f32 = 16.0;
+pub const MAX_BULLET_AXIS_ABS: f32 = 4096.0;
 pub const MAX_BULLET_SPEED_ABS: f32 = 10_000.0;
 pub const MAX_BULLET_STYLE_ABS: f32 = 10_000.0;
 

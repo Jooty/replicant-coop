@@ -2,18 +2,21 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use nc_net::{Channel, LINK_GAME_PEER, LocalLinkTransport, Transport, TransportEvent};
+use nc_wire::{Envelope, STORY_MODE, SessionRules, decode_enveloped, encode_enveloped};
 use replicant_hook::net::NetSharedExt;
 use replicant_hook::net::{LocalSnapshot, NetState, NetThread};
 use replicant_proto::{
     BuildGate, CombatEvent, EnemyGone, EnemyGoneReason, EnemyId, FollowPhase, GameReadiness,
-    Message, PathInfo, PlayerSettings, PlayerState, Reject, RejectReason, SessionOptions, Welcome,
-    decode, encode,
+    Member, Message, PathInfo, PlayerSettings, PlayerState, Reject, RejectReason, SessionOptions,
+    Welcome,
 };
 
 const BUILD: BuildGate = BuildGate {
     time_date_stamp: 0x60B7_3C00,
     size_of_image: 0x0533_9000,
 };
+const GAME_SLOT: u8 = 1;
+const PARTNER_SLOT: u8 = 0;
 const WAIT_LIMIT: Duration = Duration::from_secs(20);
 const LAUNCHER_SETTINGS: PlayerSettings = PlayerSettings {
     keep_running: false,
@@ -44,7 +47,7 @@ impl FakeLauncher {
         self.link.poll(&mut events);
         for event in events {
             if let TransportEvent::Message { payload, .. } = event
-                && let Ok(message) = decode(&payload)
+                && let Ok((_, message)) = decode_enveloped::<Message>(&payload)
             {
                 self.received.push(message);
             }
@@ -52,7 +55,16 @@ impl FakeLauncher {
     }
 
     fn say(&mut self, message: &Message) {
-        let bytes = encode(message).expect("encodes");
+        self.say_from(GAME_SLOT, message);
+    }
+
+    fn say_relayed(&mut self, message: &Message) {
+        self.say_from(PARTNER_SLOT, message);
+    }
+
+    fn say_from(&mut self, from: u8, message: &Message) {
+        let envelope = Envelope { from, to: None };
+        let bytes = encode_enveloped(&envelope, message).expect("encodes");
         let _ = self
             .link
             .send(LINK_GAME_PEER, Channel::ReliableOrdered, &bytes);
@@ -110,23 +122,35 @@ fn remote_state(x: f32) -> PlayerState {
     snapshot_at(x).to_player_state(1)
 }
 
+fn member(slot: u8, name: &str) -> Message {
+    Message::Member(Member {
+        slot,
+        name: name.to_owned(),
+    })
+}
+
 fn welcome(slot: u8, name: &str) -> Message {
     Message::Welcome(Welcome {
         version: replicant_proto::PROTOCOL_VERSION,
         slot,
         host_name: name.to_owned(),
+        rules: SessionRules {
+            mode: STORY_MODE,
+            max_players: 2,
+        },
     })
 }
 
 fn link_up_partner_loading(launcher: &mut FakeLauncher, game: &NetThread) {
     assert!(wait_until(|| game.view().state == NetState::LauncherLinked));
-    launcher.say(&welcome(1, "Hosty"));
+    launcher.say(&welcome(GAME_SLOT, "Hosty"));
+    launcher.say(&member(PARTNER_SLOT, "Hosty"));
     assert!(wait_until(|| game.view().state == NetState::Connected));
 }
 
 fn link_up(launcher: &mut FakeLauncher, game: &NetThread) {
     link_up_partner_loading(launcher, game);
-    launcher.say(&Message::Readiness(GameReadiness::InPlay));
+    launcher.say_relayed(&Message::Readiness(GameReadiness::InPlay));
     assert!(wait_until(|| game.view().partner_in_play()));
 }
 
@@ -153,7 +177,7 @@ fn without_a_listening_launcher_the_state_stays_waiting() {
 fn a_welcome_from_the_launcher_names_the_peer_and_starts_snapshots() {
     let (mut launcher, game) = start_game();
     link_up(&mut launcher, &game);
-    assert_eq!(game.view().peer_name.as_deref(), Some("Hosty"));
+    assert_eq!(game.view().partner_name(), Some("Hosty"));
     assert!(game.wants_snapshots());
 }
 
@@ -161,13 +185,17 @@ fn a_welcome_from_the_launcher_names_the_peer_and_starts_snapshots() {
 fn relayed_player_state_reaches_the_store() {
     let (mut launcher, game) = start_game();
     link_up(&mut launcher, &game);
-    launcher.say(&Message::State(remote_state(42.0)));
+    launcher.say_relayed(&Message::State(remote_state(42.0)));
     assert!(wait_until(|| {
         game.view()
-            .remote
+            .partner_state()
             .is_some_and(|remote| remote.state.position[0] == 42.0 && remote.state.phase == 3)
     }));
-    let remote = game.view().remote.expect("remote was just seen");
+    let remote = game
+        .view()
+        .partner_state()
+        .cloned()
+        .expect("remote was just seen");
     assert_eq!(remote.name, "Hosty");
     assert_eq!(remote.slot, 0);
 }
@@ -197,8 +225,8 @@ fn enemy_gone(ordinal: u16) -> Message {
 fn relayed_game_messages_from_the_launcher_wait_in_the_inbox() {
     let (mut launcher, game) = start_game();
     link_up(&mut launcher, &game);
-    launcher.say(&enemy_gone(1));
-    launcher.say(&enemy_gone(2));
+    launcher.say_relayed(&enemy_gone(1));
+    launcher.say_relayed(&enemy_gone(2));
     let mut taken = Vec::new();
     assert!(wait_until(|| {
         taken.extend(game.take_relayed(|message| matches!(message, Message::EnemyGone(_))));
@@ -232,11 +260,11 @@ fn path_info_fills_rtt_and_path() {
 fn a_bye_from_the_launcher_clears_the_peer() {
     let (mut launcher, game) = start_game();
     link_up(&mut launcher, &game);
-    launcher.say(&Message::State(remote_state(1.0)));
-    assert!(wait_until(|| game.view().remote.is_some()));
+    launcher.say_relayed(&Message::State(remote_state(1.0)));
+    assert!(wait_until(|| game.view().partner_state().is_some()));
     launcher.say(&Message::Bye);
     assert!(wait_until(|| game.view().state == NetState::LauncherLinked));
-    assert_eq!(game.view().remote, None);
+    assert!(game.view().partner_state().is_none());
     assert!(!game.wants_snapshots());
 }
 
@@ -262,7 +290,7 @@ fn losing_the_launcher_returns_to_waiting_and_relinks() {
             || game.view().state == NetState::LauncherLinked
     }));
     assert!(wait_until(|| game.view().state == NetState::LauncherLinked));
-    assert_eq!(game.view().remote, None);
+    assert!(game.view().partner_state().is_none());
 }
 
 #[test]
@@ -275,7 +303,7 @@ fn combat_events_go_out_to_the_launcher_and_come_in_from_it() {
             .received
             .contains(&Message::Combat(CombatEvent::Downed))
     }));
-    launcher.say(&Message::Combat(CombatEvent::Revived));
+    launcher.say_relayed(&Message::Combat(CombatEvent::Revived));
     assert!(wait_until(|| {
         game.take_relayed(|message| matches!(message, Message::Combat(_)))
             .contains(&Message::Combat(CombatEvent::Revived))
@@ -290,12 +318,12 @@ fn follow_order() -> Message {
 fn a_partner_whose_game_is_not_in_play_is_joining_and_its_messages_are_dropped() {
     let (mut launcher, game) = start_game();
     link_up_partner_loading(&mut launcher, &game);
-    launcher.say(&Message::Readiness(GameReadiness::Loading));
-    launcher.say(&follow_order());
-    launcher.say(&enemy_gone(1));
-    launcher.say(&Message::Readiness(GameReadiness::InPlay));
+    launcher.say_relayed(&Message::Readiness(GameReadiness::Loading));
+    launcher.say_relayed(&follow_order());
+    launcher.say_relayed(&enemy_gone(1));
+    launcher.say_relayed(&Message::Readiness(GameReadiness::InPlay));
     assert!(wait_until(|| game.view().partner_in_play()));
-    assert_eq!(game.view().remote, None);
+    assert!(game.view().partner_state().is_none());
     assert!(game.take_relayed(|_| true).is_empty());
 }
 
@@ -311,7 +339,7 @@ fn a_partner_who_is_joining_is_shown_as_joining() {
 fn messages_flow_once_the_partner_reports_in_play() {
     let (mut launcher, game) = start_game();
     link_up(&mut launcher, &game);
-    launcher.say(&follow_order());
+    launcher.say_relayed(&follow_order());
     assert!(wait_until(|| {
         !game
             .take_relayed(|message| *message == follow_order())
@@ -323,12 +351,12 @@ fn messages_flow_once_the_partner_reports_in_play() {
 fn a_partner_game_that_leaves_play_loses_its_state_and_stale_orders() {
     let (mut launcher, game) = start_game();
     link_up(&mut launcher, &game);
-    launcher.say(&Message::State(remote_state(2.0)));
-    launcher.say(&follow_order());
-    assert!(wait_until(|| game.view().remote.is_some()));
-    launcher.say(&Message::Readiness(GameReadiness::NotLinked));
+    launcher.say_relayed(&Message::State(remote_state(2.0)));
+    launcher.say_relayed(&follow_order());
+    assert!(wait_until(|| game.view().partner_state().is_some()));
+    launcher.say_relayed(&Message::Readiness(GameReadiness::NotLinked));
     assert!(wait_until(|| !game.view().partner_in_play()));
-    assert_eq!(game.view().remote, None);
+    assert!(game.view().partner_state().is_none());
     assert!(game.take_relayed(|_| true).is_empty());
     assert!(game.view().partner_joining());
 }
@@ -376,10 +404,10 @@ fn a_game_that_never_reports_is_loading_to_the_launcher() {
 fn states_still_flow_when_readiness_never_arrives() {
     let (mut launcher, game) = start_game();
     link_up_partner_loading(&mut launcher, &game);
-    launcher.say(&Message::State(remote_state(9.0)));
-    assert!(wait_until(|| game.view().remote.is_some()));
+    launcher.say_relayed(&Message::State(remote_state(9.0)));
+    assert!(wait_until(|| game.view().partner_state().is_some()));
     assert!(game.view().partner_in_play());
-    launcher.say(&follow_order());
+    launcher.say_relayed(&follow_order());
     assert!(wait_until(|| {
         !game
             .take_relayed(|message| *message == follow_order())
@@ -441,4 +469,23 @@ fn host_options_changed_in_game_update_the_view_and_reach_the_launcher() {
             .contains(&Message::SessionOptions(options))
     });
     assert!(seen, "the launcher never saw the host options");
+}
+
+#[test]
+fn a_finished_save_reaches_the_launcher_with_its_result() {
+    let (mut launcher, game) = start_game();
+    link_up(&mut launcher, &game);
+    game.tell_launcher_saved(true);
+    game.tell_launcher_saved(false);
+    let seen = launcher.wait_until(|launcher| {
+        launcher
+            .received
+            .contains(&Message::GameSaved { succeeded: false })
+    });
+    assert!(seen, "the launcher never saw the failed save");
+    assert!(
+        launcher
+            .received
+            .contains(&Message::GameSaved { succeeded: true })
+    );
 }

@@ -19,7 +19,11 @@ pub fn tick(build: &VerifiedBuild) {
     if arrived.is_empty() {
         return;
     }
-    let name = net.view().peer_name.unwrap_or_default();
+    let name = net
+        .view()
+        .partner_name()
+        .map(str::to_owned)
+        .unwrap_or_default();
     for message in arrived {
         let Message::Pickup(pickup) = message else {
             continue;

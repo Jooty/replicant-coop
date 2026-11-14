@@ -50,7 +50,7 @@ pub fn tick(build: &VerifiedBuild) {
         FollowRole::Host => {
             let partner_phase = view
                 .partner_in_play()
-                .then(|| view.remote.as_ref().map(|remote| remote.state.phase))
+                .then(|| view.partner_state().map(|remote| remote.state.phase))
                 .flatten();
             host_tick(build, net, arrived, (local_phase, partner_phase), now);
         }

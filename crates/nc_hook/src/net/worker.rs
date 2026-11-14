@@ -5,13 +5,17 @@ use std::time::Instant;
 
 use nc_net::link_traffic::{LinkTraffic, RefusalLog};
 use nc_net::{Channel, PeerId, Transport, TransportEvent};
-use nc_wire::{GameMessage, LinkPayload, WireError, decode, encode};
+use nc_wire::{
+    Envelope, GameMessage, LinkPayload, Member, WireError, decode_enveloped, encode_enveloped,
+};
 
 use crate::diagnostics::log_line;
 use crate::net::first_tick::first_state_tick_now;
 use crate::net::link_peer::LinkPeer;
 use crate::net::net_game::{LinkAccess, NetGame, NetSharedOf, SharedNetOf};
+use crate::net::net_shared::NetShared;
 use crate::net::net_state::NetState;
+use crate::net::player::Player;
 use crate::net::{SEND_INTERVAL, WORKER_WAKE_INTERVAL};
 use crate::relay::RelayInbox;
 
@@ -101,10 +105,11 @@ impl<G: NetGame, T: Transport> Worker<G, T> {
 
     fn run_game_idle(&mut self) {
         let access = LinkAccess::<G>::new(&self.shared, &self.relay_inbox);
+        let envelope = own_envelope::<G>(&self.shared);
         let transport = &mut self.transport;
         let peer = self.link.peer;
         self.game.on_idle(&access, &mut |message, channel| {
-            send_encoded(transport, peer, channel, message)
+            send_encoded(transport, peer, channel, &envelope, message)
         });
     }
 
@@ -124,24 +129,67 @@ impl<G: NetGame, T: Transport> Worker<G, T> {
         self.latest_snapshot = None;
         let departed = {
             let mut shared = lock_shared::<G>(&self.shared);
-            let departed = shared.peer_name.take();
+            let departed: Vec<String> = std::mem::take(&mut shared.players)
+                .into_values()
+                .map(|player| player.name)
+                .collect();
             shared.rtt = None;
             shared.direct_path = None;
-            shared.remote = None;
             shared.local = None;
             shared.local_slot = None;
             self.game.on_peer_cleared(&mut shared.extras);
             departed
         };
-        if let Some(name) = departed {
+        for name in departed {
             self.game.announce(&format!("{name} left"));
         }
         self.relay_inbox.clear();
     }
 
+    fn on_member_joined(&mut self, member: Member) {
+        {
+            let mut shared = lock_shared::<G>(&self.shared);
+            if shared.local_slot == Some(member.slot) {
+                return;
+            }
+            let mut player = Player::joined(member.slot, member.name.clone());
+            self.game.on_player_joined(&mut shared.extras, &mut player);
+            shared.players.insert(member.slot, player);
+            if shared.local_slot.is_some() {
+                shared.state = NetState::Connected;
+                self.wants_snapshots.store(true, Ordering::Relaxed);
+            }
+        }
+        self.game.announce(&format!("{} joined", member.name));
+    }
+
+    fn on_member_left(&mut self, slot: u8) {
+        let (departed, nobody_left) = {
+            let mut shared = lock_shared::<G>(&self.shared);
+            let Some(departed) = shared.players.remove(&slot) else {
+                return;
+            };
+            self.game.on_player_left(&mut shared.extras, slot);
+            let nobody_left = shared.players.is_empty();
+            if nobody_left {
+                shared.state = NetState::LauncherLinked;
+                shared.rtt = None;
+                shared.direct_path = None;
+                shared.local = None;
+            }
+            (departed, nobody_left)
+        };
+        if nobody_left {
+            self.wants_snapshots.store(false, Ordering::Relaxed);
+            self.latest_snapshot = None;
+            self.relay_inbox.clear();
+        }
+        self.game.announce(&format!("{} left", departed.name));
+    }
+
     fn on_payload(&mut self, payload: &[u8]) {
-        let message = match decode::<G::Message>(payload) {
-            Ok(message) => message,
+        let (envelope, message) = match decode_enveloped::<G::Message>(payload) {
+            Ok(framed) => framed,
             Err(error) => {
                 self.log_refused("undecodable message", &error);
                 return;
@@ -151,17 +199,22 @@ impl<G: NetGame, T: Transport> Worker<G, T> {
             .note_received(G::kind_name(&message), Instant::now());
         match message.into_link() {
             Ok(LinkPayload::Welcome(welcome)) => {
-                {
+                let someone_is_here = {
                     let mut shared = lock_shared::<G>(&self.shared);
-                    shared.state = NetState::Connected;
-                    shared.peer_name = Some(welcome.host_name.clone());
                     shared.local_slot = Some(welcome.slot);
-                    self.game
-                        .on_connected(&mut shared.extras, &welcome.host_name);
-                }
-                self.game.announce(&format!("{} joined", welcome.host_name));
-                self.wants_snapshots.store(true, Ordering::Relaxed);
+                    shared.rules = welcome.rules;
+                    let someone_is_here = !shared.players.is_empty();
+                    if someone_is_here {
+                        shared.state = NetState::Connected;
+                    }
+                    someone_is_here
+                };
+                self.wants_snapshots
+                    .store(someone_is_here, Ordering::Relaxed);
             }
+            Ok(LinkPayload::Member(member)) => self.on_member_joined(member),
+            Ok(LinkPayload::MemberLeft { slot }) => self.on_member_left(slot),
+            Ok(LinkPayload::Rules(rules)) => lock_shared::<G>(&self.shared).rules = rules,
             Ok(LinkPayload::Bye) => {
                 log_line(&format!(
                     "net: the launcher says the other player left; {}",
@@ -177,7 +230,7 @@ impl<G: NetGame, T: Transport> Worker<G, T> {
             Ok(_) => {}
             Err(message) => {
                 let access = LinkAccess::<G>::new(&self.shared, &self.relay_inbox);
-                self.game.on_message(&access, message);
+                self.game.on_message(&access, envelope.from, message);
             }
         }
     }
@@ -194,7 +247,7 @@ impl<G: NetGame, T: Transport> Worker<G, T> {
         };
         self.next_tick = self.next_tick.wrapping_add(1);
         let message = self.game.snapshot_message(&snapshot, self.next_tick);
-        let Ok(bytes) = encode(&message) else {
+        let Ok(bytes) = encode_enveloped(&own_envelope::<G>(&self.shared), &message) else {
             return;
         };
         if self
@@ -216,13 +269,19 @@ impl<G: NetGame, T: Transport> Worker<G, T> {
     }
 
     fn send_relayed(&mut self, relays: &Receiver<G::Message>) {
-        let connected = self.wants_snapshots.load(Ordering::Relaxed)
-            && G::peer_in_play(&lock_shared::<G>(&self.shared).extras);
+        let (anyone_in_play, envelope) = {
+            let shared = lock_shared::<G>(&self.shared);
+            let anyone_in_play = shared
+                .others()
+                .any(|player| G::player_in_play(&player.watch));
+            (anyone_in_play, own_envelope_of(&shared))
+        };
+        let connected = self.wants_snapshots.load(Ordering::Relaxed) && anyone_in_play;
         for message in relays.try_iter() {
             if !connected {
                 continue;
             }
-            let bytes = match encode(&message) {
+            let bytes = match encode_enveloped(&envelope, &message) {
                 Ok(bytes) => bytes,
                 Err(error) => {
                     self.log_refused(G::kind_name(&message), &error);
@@ -242,12 +301,18 @@ impl<G: NetGame, T: Transport> Worker<G, T> {
     }
 
     fn send_launcher_messages(&mut self, messages: &Receiver<G::Message>) {
-        let linked = lock_shared::<G>(&self.shared).state != NetState::WaitingForLauncher;
+        let (linked, envelope) = {
+            let shared = lock_shared::<G>(&self.shared);
+            (
+                shared.state != NetState::WaitingForLauncher,
+                own_envelope_of(&shared),
+            )
+        };
         for message in messages.try_iter() {
             if !linked {
                 continue;
             }
-            let bytes = match encode(&message) {
+            let bytes = match encode_enveloped(&envelope, &message) {
                 Ok(bytes) => bytes,
                 Err(error) => {
                     self.log_refused(G::kind_name(&message), &error);
@@ -265,13 +330,26 @@ fn lock_shared<G: NetGame>(shared: &SharedNetOf<G>) -> MutexGuard<'_, NetSharedO
     shared.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+fn own_envelope<G: NetGame>(shared: &SharedNetOf<G>) -> Envelope {
+    own_envelope_of(&lock_shared::<G>(shared))
+}
+
+fn own_envelope_of<S, P, Y, X>(shared: &NetShared<S, P, Y, X>) -> Envelope {
+    // Before the welcome the slot is unknown; the host stamps `from` on every frame anyway.
+    Envelope {
+        from: shared.local_slot.unwrap_or(0),
+        to: None,
+    }
+}
+
 fn send_encoded<M: GameMessage>(
     transport: &mut impl Transport,
     peer: PeerId,
     channel: Channel,
+    envelope: &Envelope,
     message: &M,
 ) -> bool {
-    let Ok(bytes) = encode(message) else {
+    let Ok(bytes) = encode_enveloped(envelope, message) else {
         return false;
     };
     transport.send(peer, channel, &bytes).is_ok()

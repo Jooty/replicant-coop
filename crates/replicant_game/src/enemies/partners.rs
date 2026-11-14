@@ -22,6 +22,18 @@ pub fn partner_actors<M: GameMemory>(memory: &M) -> Vec<u64> {
     .collect()
 }
 
+/// Unique actor -2's place and facing, when the game holds her live.
+pub fn unique_companion_pose<M: GameMemory>(memory: &M) -> Option<PuppetPose> {
+    let actor = memory.module_base() + u64::from(PARTNER_KAINE_ACTOR_RVA);
+    if !actor_is_live(memory, actor).unwrap_or(false) {
+        return None;
+    }
+    let block = memory
+        .read_array::<ACTOR_TRANSFORM_BLOCK_BYTES>(actor + ACTOR_TRANSFORM_BLOCK_OFFSET)
+        .ok()?;
+    Some(PuppetPose::from_transform_block(&block))
+}
+
 /// One log text per companion the game holds live, so the two logs side by side show how far
 /// apart the two games' companions are.
 pub fn live_companion_texts<M: GameMemory>(memory: &M) -> Vec<String> {

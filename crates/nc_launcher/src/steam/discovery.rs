@@ -1,6 +1,9 @@
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use nc_launcher_core::GameProfile;
+use replicant_game::build::PE_HEADER_READ_LEN;
 
 use crate::steam::library::{library_paths, manifest_install_dir};
 
@@ -32,6 +35,16 @@ impl GameInstall {
             .exe_names
             .iter()
             .any(|name| self.game_dir.join(name).is_file())
+    }
+
+    /// Whether the game's exe is a build the mod supports, read from the head of the file.
+    pub fn exe_build_supported(&self) -> bool {
+        let mut header = Vec::with_capacity(PE_HEADER_READ_LEN);
+        let read = File::open(self.exe_path()).and_then(|file| {
+            file.take(PE_HEADER_READ_LEN as u64)
+                .read_to_end(&mut header)
+        });
+        read.is_ok() && self.profile.supports_exe_header(&header)
     }
 
     pub fn proton_compat_dir(&self) -> PathBuf {

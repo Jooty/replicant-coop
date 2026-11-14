@@ -3,15 +3,18 @@ use std::sync::atomic::Ordering;
 
 use replicant_game::attack_gauge::{
     ATTACK_GAUGE_SWITCHED_OFF_TEXT, GaugeReading, GuestGaugeFacts, GuestGaugeStep, HostGaugeView,
-    LocalGaugeView, count_nodes, guest_close_text, guest_gauge_step, guest_node_hp,
-    guest_open_readback_text, guest_open_text, guest_wait_text, read_gauge, write_gauge_clock,
-    write_node_hp,
+    LocalGaugeView, count_nodes, gauge_tally_text, guest_ask_sent_text, guest_close_text,
+    guest_gauge_step, guest_node_hp, guest_open_readback_text, guest_open_text, guest_wait_text,
+    read_gauge, write_gauge_clock, write_node_hp,
 };
 use replicant_game::enemies::EnemySighting;
-use replicant_proto::{AttackGaugeOpen, EnemyId, Message};
+use replicant_proto::{AttackGaugeAsk, AttackGaugeNode, AttackGaugeOpen, EnemyId, Message};
 
 use crate::attack_gauge::calls::GaugeCalls;
-use crate::attack_gauge::state::{GUEST, GUEST_MIRRORING, GuestSide, now_ms, off_file_present};
+use crate::attack_gauge::detours::send_gauge_hit;
+use crate::attack_gauge::state::{
+    GUEST, GUEST_HOLDS_GAUGE_HITS, GuestSide, now_ms, off_file_present,
+};
 use crate::build_gate::VerifiedBuild;
 use crate::diagnostics::log_line;
 use crate::memory::InProcessMemory;
@@ -45,7 +48,9 @@ pub fn tick_guest(build: &VerifiedBuild, phase: u16, seen: &[(EnemyId, EnemySigh
         }
         guest.mirrored_serial = None;
         guest.host_fresh = false;
-        GUEST_MIRRORING.store(false, Ordering::Release);
+        guest.asked_host = false;
+        guest.held_hits.clear();
+        GUEST_HOLDS_GAUGE_HITS.store(false, Ordering::Release);
         return;
     }
     let mut memory = InProcessMemory::new(build);
@@ -56,6 +61,9 @@ pub fn tick_guest(build: &VerifiedBuild, phase: u16, seen: &[(EnemyId, EnemySigh
         log_line(&format!(
             "attack gauge: number {serial} closed on your side before the host's did"
         ));
+    }
+    if reading.is_none() {
+        forget_own_gauge(&mut guest);
     }
     guest.own_gauge_since_ms = match (&reading, guest.mirrored_serial) {
         (Some(_), None) => Some(guest.own_gauge_since_ms.unwrap_or(now)),
@@ -93,6 +101,7 @@ pub fn tick_guest(build: &VerifiedBuild, phase: u16, seen: &[(EnemyId, EnemySigh
         local_only_for_ms: guest
             .own_gauge_since_ms
             .map_or(0, |since| now.saturating_sub(since)),
+        asked_host: guest.asked_host,
         switched_off,
     };
     let step = guest_gauge_step(&facts);
@@ -109,6 +118,12 @@ pub fn tick_guest(build: &VerifiedBuild, phase: u16, seen: &[(EnemyId, EnemySigh
             if guest.last_wait != Some(wait) {
                 guest.last_wait = Some(wait);
                 log_line(&guest_wait_text(host_open.map(|host| host.serial), wait));
+            }
+        }
+        (GuestGaugeStep::AskHost, _) => {
+            guest.asked_host = true;
+            if let Some(reading) = &reading {
+                ask_host(&mut guest, phase, reading, &id_of);
             }
         }
         (GuestGaugeStep::Open, Some((serial, open))) => {
@@ -133,6 +148,7 @@ pub fn tick_guest(build: &VerifiedBuild, phase: u16, seen: &[(EnemyId, EnemySigh
                 log_line(&format!(
                     "attack gauge: took over your own gauge for the host's number {serial}"
                 ));
+                send_held_hits(&mut guest, serial);
             }
             if guest.host_fresh
                 && let Some(reading) = &reading
@@ -150,12 +166,100 @@ pub fn tick_guest(build: &VerifiedBuild, phase: u16, seen: &[(EnemyId, EnemySigh
             log_line(&guest_close_text(guest.mirrored_serial, step));
             guest.mirrored_serial = None;
             guest.own_gauge_since_ms = None;
+            forget_own_gauge(&mut guest);
         }
         (GuestGaugeStep::Open | GuestGaugeStep::Mirror, None) => {}
     }
     guest.host_fresh = false;
-    let mirroring = guest.mirrored_serial.is_some() && read_gauge(&memory).is_some();
-    GUEST_MIRRORING.store(mirroring, Ordering::Release);
+    let after = read_gauge(&memory);
+    let holds = (guest.mirrored_serial.is_some() || guest.asked_host) && after.is_some();
+    GUEST_HOLDS_GAUGE_HITS.store(holds, Ordering::Release);
+    log_tally(&mut guest, now, after.as_ref());
+}
+
+fn ask_host(
+    guest: &mut GuestSide,
+    phase: u16,
+    reading: &GaugeReading,
+    id_of: &dyn Fn(u64) -> Option<EnemyId>,
+) {
+    let Some(boss) = id_of(reading.boss) else {
+        return;
+    };
+    let partner = match reading.partner {
+        None => None,
+        Some(actor) => {
+            let Some(id) = id_of(actor) else {
+                log_line(&format!(
+                    "attack gauge: your game opened a gauge whose second actor {actor:#x} is not a shared enemy, not asked"
+                ));
+                return;
+            };
+            Some(id)
+        }
+    };
+    let Some(net) = net::handle() else {
+        return;
+    };
+    guest.next_ask = guest.next_ask.wrapping_add(1);
+    let ask = AttackGaugeAsk {
+        phase,
+        ask: guest.next_ask,
+        open: AttackGaugeOpen {
+            boss,
+            partner,
+            total_seconds: reading.total_seconds,
+            remaining_seconds: reading.remaining_seconds,
+            map_points: reading.map_points,
+            options: reading.options,
+            nodes: reading.nodes.iter().map(|node| node.node).collect(),
+        },
+    };
+    log_line(&guest_ask_sent_text(&ask));
+    net.send_relayed(Message::AttackGaugeAsk(ask));
+}
+
+fn send_held_hits(guest: &mut GuestSide, serial: u32) {
+    let phase = guest.phase;
+    for hit in std::mem::take(&mut guest.held_hits) {
+        if send_gauge_hit(phase, serial, hit) {
+            guest.tally.sent = guest.tally.sent.saturating_add(1);
+        }
+    }
+}
+
+fn forget_own_gauge(guest: &mut GuestSide) {
+    guest.asked_host = false;
+    if !guest.held_hits.is_empty() {
+        log_line(&format!(
+            "attack gauge: {} held hits dropped, the host never opened this gauge",
+            guest.held_hits.len()
+        ));
+        guest.held_hits.clear();
+    }
+}
+
+fn log_tally(guest: &mut GuestSide, now: u64, reading: Option<&GaugeReading>) {
+    let Some(reading) = reading else {
+        if guest.tally_shown {
+            guest.tally_shown = false;
+            guest.tally.reset();
+        }
+        return;
+    };
+    if !guest.tally_shown {
+        guest.tally_shown = true;
+        guest.tally.reset();
+    }
+    if guest.tally.line_due(now) {
+        let nodes: Vec<AttackGaugeNode> = reading.nodes.iter().map(|node| node.node).collect();
+        log_line(&gauge_tally_text(
+            "guest",
+            guest.mirrored_serial,
+            &nodes,
+            &guest.tally,
+        ));
+    }
 }
 
 fn open_like_host(

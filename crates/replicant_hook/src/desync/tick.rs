@@ -41,7 +41,7 @@ pub fn tick_desync(build: &VerifiedBuild) {
     let Some(own) = own_digest(build, &view) else {
         return;
     };
-    let seen = view.remote.as_ref().map(|remote| remote.state.position);
+    let seen = view.partner_state().map(|remote| remote.state.position);
     for line in reporter.compare(now, &own, &partner, seen) {
         log_line(&line);
     }

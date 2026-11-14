@@ -147,7 +147,7 @@ pub fn tick_npc_sync(build: &VerifiedBuild) {
     let relayed = net
         .take_relayed(|message| matches!(message, Message::NpcSnapshot(_) | Message::NpcTalk(_)));
     let view = net.view();
-    let Some(remote) = view.remote else {
+    let Some(remote) = view.partner_state().cloned() else {
         sync.go_idle(build, "no other player is connected");
         return;
     };

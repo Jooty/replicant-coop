@@ -40,7 +40,7 @@ pub fn tick_sky_sync(build: &VerifiedBuild) {
         )
     });
     let view = net.view();
-    let Some(remote) = view.remote else {
+    let Some(remote) = view.partner_state().cloned() else {
         sync.broadcast.reset();
         sync.hold.reset();
         sync.assembler = RecordAssembler::default();

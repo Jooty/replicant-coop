@@ -15,6 +15,7 @@ use replicant_proto::{EffectPlay, WORLD_EFFECT_TRANSFORM_FLOATS, WorldEffectPlay
 
 use crate::build_gate::VerifiedBuild;
 use crate::effects::hooks::nested_effect_call;
+use crate::kaine::play_for_partner;
 use crate::memory::InProcessMemory;
 
 type PlayEffect =
@@ -56,14 +57,14 @@ pub(super) fn play_effect(
     // SAFETY: the pointer was read from the actor's vtable and lies inside the game image; the
     // slot takes (actor, out handle, effect parameters, attach descriptor) as the game's own
     // callers pass them. The blocks live in `block`, which the caller keeps for the effect's life.
-    unsafe {
+    play_for_partner(|| unsafe {
         core::mem::transmute::<usize, PlayEffect>(function as usize)(
             actor as usize as *mut c_void,
             &mut handle,
             params,
             attach,
         );
-    }
+    });
     Ok(PlayedEffect {
         handle: (handle != EFFECT_INVALID_HANDLE).then_some(handle),
         block,
@@ -148,17 +149,19 @@ pub(super) fn spawn_world_effect(build: &VerifiedBuild, effect: &WorldEffectPlay
     // SAFETY: the RVA starts the function (out handle, name, 3x4 matrix, scale, four stack words
     // -> out handle) in the verified build; it hashes the name and copies the matrix during the
     // call, both outlive it, the matrix is 16-byte aligned, and this runs on the game thread.
-    nested_effect_call(|| unsafe {
-        core::mem::transmute::<usize, SpawnByName>(function)(
-            &mut handle,
-            name.as_ptr().cast::<u8>(),
-            transform.0.as_ptr(),
-            f32::from_bits(scale),
-            fifth,
-            sixth,
-            seventh,
-            eighth.cast_signed(),
-        );
+    play_for_partner(|| {
+        nested_effect_call(|| unsafe {
+            core::mem::transmute::<usize, SpawnByName>(function)(
+                &mut handle,
+                name.as_ptr().cast::<u8>(),
+                transform.0.as_ptr(),
+                f32::from_bits(scale),
+                fifth,
+                sixth,
+                seventh,
+                eighth.cast_signed(),
+            );
+        });
     });
     let memory = InProcessMemory::new(build);
     effect_instance_address(&memory, handle)

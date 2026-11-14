@@ -13,4 +13,4 @@ pub use peer::PeerId;
 pub use stats::LinkStats;
 
 pub const MAX_INVITE_BYTES: usize = 256;
-pub const MAX_PAYLOAD_BYTES: usize = nc_wire::MAX_MESSAGE_BYTES;
+pub const MAX_PAYLOAD_BYTES: usize = nc_wire::MAX_FRAME_BYTES;

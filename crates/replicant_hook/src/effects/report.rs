@@ -1,7 +1,10 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{LazyLock, Mutex, PoisonError};
 
-use replicant_game::effects::{EFFECT_LOG_LINES_PER_WINDOW, EFFECT_LOG_WINDOW_MS, RateWindow};
+use replicant_game::effects::{
+    EFFECT_LOG_LINES_PER_WINDOW, EFFECT_LOG_WINDOW_MS, EffectNameTally,
+    MAX_EFFECT_NAMES_IN_A_SUMMARY, RateWindow, world_effects_shown_line,
+};
 
 use crate::diagnostics::log_line;
 use crate::net::net_clock_ms;
@@ -18,6 +21,7 @@ pub(super) static PLAYED_SOUNDS: AtomicU32 = AtomicU32::new(0);
 pub(super) static PLAY_FAILED: AtomicU32 = AtomicU32::new(0);
 pub(super) static DROPPED_WITHOUT_PUPPET: AtomicU32 = AtomicU32::new(0);
 
+static WORLD_EFFECTS_SHOWN: LazyLock<Mutex<EffectNameTally>> = LazyLock::new(Mutex::default);
 static LOG_WINDOW: LazyLock<Mutex<RateWindow>> = LazyLock::new(|| {
     Mutex::new(RateWindow::new(
         EFFECT_LOG_WINDOW_MS,
@@ -27,6 +31,13 @@ static LOG_WINDOW: LazyLock<Mutex<RateWindow>> = LazyLock::new(|| {
 
 pub(super) fn count(counter: &AtomicU32) {
     counter.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(super) fn note_world_effect_shown(name: &str, shown: bool) {
+    WORLD_EFFECTS_SHOWN
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .note(name, shown);
 }
 
 pub(super) fn log_limited(line: &str) {
@@ -40,6 +51,15 @@ pub(super) fn log_limited(line: &str) {
 }
 
 pub(super) fn log_summary(still_live: usize) {
+    let shown = world_effects_shown_line(
+        &mut WORLD_EFFECTS_SHOWN
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner),
+        MAX_EFFECT_NAMES_IN_A_SUMMARY,
+    );
+    if let Some(line) = shown {
+        log_line(&line);
+    }
     let take = |counter: &AtomicU32| counter.swap(0, Ordering::Relaxed);
     let (sent_effects, sent_sounds) = (take(&SENT_EFFECTS), take(&SENT_SOUNDS));
     let (refused, unreadable) = (take(&REFUSED_BY_RATE_LIMIT), take(&UNREADABLE));

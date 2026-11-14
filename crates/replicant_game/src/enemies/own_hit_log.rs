@@ -1,15 +1,15 @@
 use replicant_proto::PartnerBody;
 
+use crate::kaine::level_fields_in_use;
 use crate::memory::GameMemory;
 use crate::offsets::{
-    ENTITY_LEVEL_OFFSET, ENTITY_RVA, FORCED_WEAPON_ID, SAVE_EQUIPPED_WEAPON_ID_OFFSET,
+    ACTOR_PLAYER_PARAM_POINTER_OFFSET, ENTITY_RVA, FORCED_WEAPON_ID,
+    PLAYER_PARAM_CACHED_ATTACK_OFFSET, SAVE_EQUIPPED_WEAPON_ID_OFFSET,
     SAVE_FORCED_WEAPON_FLAG_OFFSET, SAVE_WEAPON_LEVELS_OFFSET, WEAPON_TABLE_LEN,
 };
 
 pub const OWN_HITS_LOGGED_EACH_PER_PHASE: u32 = 20;
 pub const OWN_HITS_LOGGED_EVERY_NTH_AFTER: u32 = 10;
-const ACTOR_PLAYER_PARAM_POINTER_OFFSET: u64 = 0x6_2B90;
-const PLAYER_PARAM_CACHED_ATTACK_OFFSET: u64 = 0x3C;
 const ACTOR_DAMAGE_MODE_OFFSET: u64 = 0x6_B96C;
 const ACTOR_DAMAGE_MODE_PERCENT_OFFSET: u64 = 0x6_B970;
 const UNREADABLE: &str = "?";
@@ -82,7 +82,11 @@ impl OwnHitInputs {
         Self {
             weapon,
             weapon_level,
-            level: memory.read_i32(save + u64::from(ENTITY_LEVEL_OFFSET)).ok(),
+            level: memory
+                .read_i32(
+                    save + u64::from(level_fields_in_use(kaine_flag.unwrap_or_default()).level),
+                )
+                .ok(),
             kaine_flag,
             cached_attack,
             mode: memory.read_i32(player + ACTOR_DAMAGE_MODE_OFFSET).ok(),

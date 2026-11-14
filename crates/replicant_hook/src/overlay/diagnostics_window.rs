@@ -1,4 +1,6 @@
-use hudhook::imgui::{Condition, Ui};
+use hudhook::imgui::Ui;
+use nc_hook::menu_view::PANEL_COLUMN_LEFT_PX;
+use nc_hook::menu_view::parts::panel_window;
 
 use crate::build_gate::{GateError, VerifiedBuild};
 use crate::overlay::mouse_panel::{MouseDiagnostics, draw_mouse_diagnostics};
@@ -13,11 +15,13 @@ pub(super) fn draw_diagnostics_window(
     if !*open {
         return;
     }
-    ui.window("diagnostics")
-        .opened(open)
-        .position([372.0, 16.0], Condition::FirstUseEver)
-        .size([420.0, 380.0], Condition::FirstUseEver)
-        .build(|| {
+    panel_window(
+        ui,
+        "diagnostics",
+        open,
+        [PANEL_COLUMN_LEFT_PX, 16.0],
+        [440.0, 400.0],
+        || {
             match gate {
                 Ok(build) => {
                     ui.text("build gate: pass");
@@ -30,5 +34,6 @@ pub(super) fn draw_diagnostics_window(
             }
             ui.text(format!("frame: {frame}"));
             draw_mouse_diagnostics(ui, mouse);
-        });
+        },
+    );
 }

@@ -133,58 +133,23 @@ fn every_seed_in_the_game_seed_table_maps_to_a_distinct_body_pack() {
 #[test]
 fn the_host_and_an_unknown_role_never_swap_their_own_body() {
     for role in [FollowRole::Host, FollowRole::Unknown] {
-        assert_eq!(
-            own_seed_swap(role, "nierB", PartnerBody::PrologueCharacter),
-            None
-        );
+        assert_eq!(own_seed_swap(role, "nierB"), None);
     }
 }
 
 #[test]
-fn the_nier_seed_becomes_the_prologue_seed_only_when_that_body_is_chosen() {
-    let swap =
-        own_seed_swap(FollowRole::Guest, "nierB", PartnerBody::PrologueCharacter).expect("swap");
-    assert_eq!(
-        (swap.from, swap.to, swap.table_index),
-        ("nierB", "nierT", 1)
-    );
-    assert!(swap.changes.contains("bookb012"));
-    assert_eq!(
-        own_seed_swap(FollowRole::Guest, "nierB", PartnerBody::Nier),
-        None
-    );
-}
-
-#[test]
-fn every_other_seed_is_left_alone() {
-    for seed in ["nierT", "nierY", "nierF", "kaineE", ""] {
-        assert_eq!(
-            own_seed_swap(FollowRole::Guest, seed, PartnerBody::PrologueCharacter),
-            None
-        );
-    }
-}
-
-#[test]
-fn as_kaine_every_protagonist_seed_becomes_her_seed() {
+fn a_guest_gets_the_swapped_body_in_place_of_every_protagonist_seed() {
     for seed in ["nierB", "nierT", "nierY", "nierF"] {
-        let swap = own_seed_swap(FollowRole::Guest, seed, PartnerBody::SeedKaineE).expect("swap");
+        let swap = own_seed_swap(FollowRole::Guest, seed).expect("swap");
         assert_eq!((swap.from, swap.to, swap.table_index), (seed, "kaineE", 4));
     }
 }
 
 #[test]
-fn as_kaine_her_own_seed_and_unknown_names_are_left_alone() {
+fn a_guest_keeps_the_swapped_seed_and_unknown_names_as_they_are() {
     for seed in ["kaineE", "nier010", ""] {
-        assert_eq!(
-            own_seed_swap(FollowRole::Guest, seed, PartnerBody::SeedKaineE),
-            None
-        );
+        assert_eq!(own_seed_swap(FollowRole::Guest, seed), None);
     }
-    assert_eq!(
-        own_seed_swap(FollowRole::Host, "nierB", PartnerBody::SeedKaineE),
-        None
-    );
 }
 
 #[test]

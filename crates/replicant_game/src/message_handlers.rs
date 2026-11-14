@@ -19,5 +19,5 @@ pub const SET_MESSAGE_CALLBACK_MESSAGE_ID_ARG_INDEX: usize = 3;
 pub const MAX_MESSAGE_HANDLERS: usize = 1024;
 pub const MAX_RELAYED_HANDLER_PASSES: usize = 64;
 pub const RELAYED_HANDLER_PASS_MS: u64 = 20_000;
-pub const PLAYER_LOCAL_MESSAGE_IDS: [i32; 6] = [210, 215, 470, 471, 472, 473];
+pub const PLAYER_LOCAL_MESSAGE_IDS: [i32; 7] = [210, 215, 239, 470, 471, 472, 473];
 pub const PLAYER_LOCAL_HANDLER_NAMES: [&str; 2] = ["LIB_GameOver", "SQ_Fishing_Radio"];

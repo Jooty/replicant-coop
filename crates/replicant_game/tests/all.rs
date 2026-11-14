@@ -8,8 +8,18 @@ mod arrival;
 mod arrive_in_state;
 #[path = "attack_gauge.rs"]
 mod attack_gauge;
+#[path = "attack_gauge_opening_hit.rs"]
+mod attack_gauge_opening_hit;
+#[path = "attack_gauge_shared.rs"]
+mod attack_gauge_shared;
 #[path = "blocks.rs"]
 mod blocks;
+#[path = "body_following_camera.rs"]
+mod body_following_camera;
+#[path = "bomb_tracking.rs"]
+mod bomb_tracking;
+#[path = "bomb_walls.rs"]
+mod bomb_walls;
 #[path = "boss_bar_probe.rs"]
 mod boss_bar_probe;
 #[path = "boss_hit_log.rs"]
@@ -18,10 +28,22 @@ mod boss_hit_log;
 mod boss_messages;
 #[path = "bullet_flights.rs"]
 mod bullet_flights;
+#[path = "bullet_hits.rs"]
+mod bullet_hits;
 #[path = "ca_gauge.rs"]
 mod ca_gauge;
 #[path = "callback_gate.rs"]
 mod callback_gate;
+#[path = "camera_aim_follow.rs"]
+mod camera_aim_follow;
+#[path = "camera_control.rs"]
+mod camera_control;
+#[path = "camera_follow.rs"]
+mod camera_follow;
+#[path = "cart_steering.rs"]
+mod cart_steering;
+#[path = "carts.rs"]
+mod carts;
 #[path = "choice_hover.rs"]
 mod choice_hover;
 #[path = "companion.rs"]
@@ -64,14 +86,20 @@ mod enemy_combat;
 mod enemy_creation;
 #[path = "enemy_difficulty.rs"]
 mod enemy_difficulty;
+#[path = "enemy_fight_waves.rs"]
+mod enemy_fight_waves;
 #[path = "enemy_log.rs"]
 mod enemy_log;
+#[path = "enemy_roster_cap.rs"]
+mod enemy_roster_cap;
 #[path = "enemy_takeover.rs"]
 mod enemy_takeover;
 #[path = "entity.rs"]
 mod entity;
 #[path = "event_log.rs"]
 mod event_log;
+#[path = "eye_set_tally.rs"]
+mod eye_set_tally;
 #[path = "far_guest_follow.rs"]
 mod far_guest_follow;
 #[path = "fight_doors.rs"]
@@ -104,6 +132,10 @@ mod frame_ring;
 mod game_closing;
 #[path = "hit_kind.rs"]
 mod hit_kind;
+#[path = "hit_reaction.rs"]
+mod hit_reaction;
+#[path = "hit_stagger.rs"]
+mod hit_stagger;
 #[path = "host_led_runs.rs"]
 mod host_led_runs;
 #[path = "host_led_script_talk.rs"]
@@ -114,14 +146,40 @@ mod host_removal;
 mod inventory;
 #[path = "invincibility.rs"]
 mod invincibility;
+#[path = "kaine_companion_off.rs"]
+mod kaine_companion_off;
+#[path = "kaine_companion_off_fallback.rs"]
+mod kaine_companion_off_fallback;
+#[path = "kaine_hit_power.rs"]
+mod kaine_hit_power;
+#[path = "kaine_level_in_use.rs"]
+mod kaine_level_in_use;
 #[path = "kaine_partner.rs"]
 mod kaine_partner;
+#[path = "kaine_rows_from_scripts.rs"]
+mod kaine_rows_from_scripts;
 #[path = "kaine_save.rs"]
 mod kaine_save;
+#[path = "kaine_scene_stand_in.rs"]
+mod kaine_scene_stand_in;
+#[path = "kaine_spell_brightness.rs"]
+mod kaine_spell_brightness;
+#[path = "kaine_spell_effect_tally.rs"]
+mod kaine_spell_effect_tally;
+#[path = "kaine_spell_look.rs"]
+mod kaine_spell_look;
+#[path = "kaine_spell_size.rs"]
+mod kaine_spell_size;
+#[path = "kaine_stand_in.rs"]
+mod kaine_stand_in;
 #[path = "kaine_stats.rs"]
 mod kaine_stats;
+#[path = "kaine_swapped_level.rs"]
+mod kaine_swapped_level;
 #[path = "kill_guard.rs"]
 mod kill_guard;
+#[path = "lift_rides.rs"]
+mod lift_rides;
 #[path = "local_pose.rs"]
 mod local_pose;
 #[path = "message_handlers.rs"]
@@ -176,6 +234,8 @@ mod probe_log;
 mod prologue_levels;
 #[path = "prompt_follow.rs"]
 mod prompt_follow;
+#[path = "prompt_follow_partner_led.rs"]
+mod prompt_follow_partner_led;
 #[path = "puppet.rs"]
 mod puppet;
 #[path = "puppet_body.rs"]
@@ -196,6 +256,8 @@ mod radio_waits;
 mod readiness;
 #[path = "relay_call_gate.rs"]
 mod relay_call_gate;
+#[path = "relayed_scenes.rs"]
+mod relayed_scenes;
 #[path = "revive_display.rs"]
 mod revive_display;
 #[path = "rewind.rs"]
@@ -212,14 +274,26 @@ mod scene_gather;
 mod scene_pull;
 #[path = "script_functions.rs"]
 mod script_functions;
+#[path = "script_jump.rs"]
+mod script_jump;
+#[path = "script_pause.rs"]
+mod script_pause;
 #[path = "script_rolls.rs"]
 mod script_rolls;
 #[path = "script_runner.rs"]
 mod script_runner;
+#[path = "scripted_camera.rs"]
+mod scripted_camera;
+#[path = "seat.rs"]
+mod seat;
 #[path = "shared_events.rs"]
 mod shared_events;
 #[path = "shared_items.rs"]
 mod shared_items;
+#[path = "shot_copies.rs"]
+mod shot_copies;
+#[path = "shot_cues.rs"]
+mod shot_cues;
 #[path = "side_view.rs"]
 mod side_view;
 #[path = "sky.rs"]

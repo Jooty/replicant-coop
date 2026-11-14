@@ -22,6 +22,7 @@ struct KnownEnemy {
     id: EnemyId,
     hp: i32,
     own_arrival: Option<u16>,
+    waits_for_host: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -106,6 +107,7 @@ impl EnemyRoster {
                     id,
                     hp: sighting.hp,
                     own_arrival: Some(own_arrival),
+                    waits_for_host: true,
                 },
             );
             update.spawned.push(id);
@@ -144,6 +146,7 @@ impl EnemyRoster {
                 id,
                 hp,
                 own_arrival: None,
+                waits_for_host: false,
             },
         );
         let next = self.next_ordinal.entry(id.group).or_insert(0);
@@ -162,12 +165,7 @@ impl EnemyRoster {
         let (Some(own_key), Some(copy_key)) = (holds(own), holds(copy)) else {
             return false;
         };
-        let retired = self.retired_copies.entry(copy.group).or_insert(0);
-        let retired_id = EnemyId {
-            group: copy.group,
-            ordinal: u16::MAX.saturating_sub(*retired),
-        };
-        *retired = retired.saturating_add(1);
+        let retired_id = self.retired_id(copy.group);
         if let Some(known) = self.known.get_mut(&copy_key) {
             known.id = retired_id;
         }
@@ -225,21 +223,82 @@ impl EnemyRoster {
         self.known.values().map(|known| known.id).collect()
     }
 
-    /// Renames each (own id, bound id) whose own id an enemy here holds and whose bound id none
-    /// does; returns the renames made.
-    pub fn bind_ids(&mut self, bindings: &[(EnemyId, EnemyId)]) -> Vec<(EnemyId, EnemyId)> {
-        let mut made = Vec::new();
-        for (own, bound) in bindings {
-            if self.known.values().any(|known| known.id == *bound) {
-                continue;
-            }
-            let Some(known) = self.known.values_mut().find(|known| known.id == *own) else {
+    /// A fresh id in `group` that no host enemy has: ordinals count down from `u16::MAX`.
+    pub fn retired_id(&mut self, group: u16) -> EnemyId {
+        let retired = self.retired_copies.entry(group).or_insert(0);
+        let id = EnemyId {
+            group,
+            ordinal: u16::MAX.saturating_sub(*retired),
+        };
+        *retired = retired.saturating_add(1);
+        id
+    }
+
+    /// Own spawns not yet paired with a host enemy inside a fight window, oldest first.
+    pub fn fight_waiting_spawns(&self) -> Vec<EnemyId> {
+        let mut waiting: Vec<(u16, u16, EnemyId)> = self
+            .known
+            .values()
+            .filter(|known| known.waits_for_host)
+            .filter_map(|known| Some((known.id.group, known.own_arrival?, known.id)))
+            .collect();
+        waiting.sort();
+        waiting.into_iter().map(|(_, _, id)| id).collect()
+    }
+
+    pub fn stop_waiting(&mut self, id: EnemyId) {
+        for known in self.known.values_mut().filter(|known| known.id == id) {
+            known.waits_for_host = false;
+        }
+    }
+
+    pub fn stop_all_waiting(&mut self) {
+        for known in self.known.values_mut() {
+            known.waits_for_host = false;
+        }
+    }
+
+    /// Applies every (from, to) at once, so a chain or a swap of ids works. A move is skipped
+    /// when no enemy holds `from`, another move has the same `to`, or `to` stays held by an enemy
+    /// that does not move; returns the moves made.
+    pub fn reassign_ids(&mut self, moves: &[(EnemyId, EnemyId)]) -> Vec<(EnemyId, EnemyId)> {
+        let mut targets = HashSet::new();
+        let mut accepted: Vec<((u64, i32), EnemyId, EnemyId)> = Vec::new();
+        for (from, to) in moves {
+            let Some(key) = self
+                .known
+                .iter()
+                .find(|(_, known)| known.id == *from)
+                .map(|(key, _)| *key)
+            else {
                 continue;
             };
-            known.id = *bound;
-            made.push((*own, *bound));
+            if targets.insert(*to) {
+                accepted.push((key, *from, *to));
+            }
         }
-        made
+        loop {
+            let moving: HashSet<EnemyId> = accepted.iter().map(|(_, from, _)| *from).collect();
+            let before = accepted.len();
+            accepted.retain(|(_, _, to)| {
+                !self
+                    .known
+                    .values()
+                    .any(|known| known.id == *to && !moving.contains(&known.id))
+            });
+            if accepted.len() == before {
+                break;
+            }
+        }
+        for (key, _, to) in &accepted {
+            if let Some(known) = self.known.get_mut(key) {
+                known.id = *to;
+            }
+        }
+        accepted
+            .into_iter()
+            .map(|(_, from, to)| (from, to))
+            .collect()
     }
 }
 

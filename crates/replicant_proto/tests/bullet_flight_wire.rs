@@ -1,6 +1,7 @@
 use replicant_proto::{
-    BULLET_STYLE_FLOATS, BulletFlight, BulletLook, MAX_BULLET_EFFECT_ID, MAX_BULLET_INSTANCE,
-    MAX_MESSAGE_BYTES, MAX_POSITION_ABS, Message, PROTOCOL_VERSION, WireError, decode, encode,
+    BULLET_STYLE_FLOATS, BulletFlight, BulletLook, MAX_BULLET_AXIS_ABS, MAX_BULLET_EFFECT_ID,
+    MAX_BULLET_INSTANCE, MAX_MESSAGE_BYTES, MAX_POSITION_ABS, Message, PROTOCOL_VERSION, WireError,
+    decode, encode,
 };
 
 fn flight() -> BulletFlight {
@@ -29,7 +30,7 @@ fn a_bullet_flight_round_trips_fits_a_message_and_is_relayed() {
     let bytes = encode(&message).unwrap();
     assert!(bytes.len() <= MAX_MESSAGE_BYTES);
     assert_eq!(decode(&bytes), Ok(message));
-    assert_eq!(PROTOCOL_VERSION, 48);
+    assert_eq!(PROTOCOL_VERSION, 67);
 }
 
 #[test]
@@ -39,7 +40,7 @@ fn a_bad_bullet_flight_is_refused() {
     let mut far = flight();
     far.transform[3] = MAX_POSITION_ABS + 1.0;
     let mut huge_axis = flight();
-    huge_axis.transform[0] = 1000.0;
+    huge_axis.transform[0] = MAX_BULLET_AXIS_ABS + 1.0;
     let mut fast = flight();
     fast.velocity[1] = f32::NAN;
     let mut unknown_effect = flight();

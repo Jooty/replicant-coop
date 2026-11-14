@@ -1,16 +1,22 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use hudhook::imgui::{MouseButton, Ui};
+use nc_hook::menu_view::parts::{fold_heading, line_button};
 use replicant_game::party_frame::TUNING_FIELDS;
 
 use crate::frame_tuning::{frame_tuning, reset_frame_tuning, save_frame_tuning, set_frame_tuning};
 
 static UNSAVED: AtomicBool = AtomicBool::new(false);
+static LAYOUT_SHOWN: AtomicBool = AtomicBool::new(false);
 const SLIDER_WIDTH_PIXELS: f32 = 190.0;
 const NUMBER_FIELD_WIDTH_PIXELS: f32 = 80.0;
 
 pub(super) fn draw_party_frame_tuning(ui: &Ui) {
-    if !ui.collapsing_header("party frame layout", hudhook::imgui::TreeNodeFlags::empty()) {
+    let mut shown = LAYOUT_SHOWN.load(Ordering::Relaxed);
+    if fold_heading(ui, "party frame layout", &mut shown) {
+        LAYOUT_SHOWN.store(shown, Ordering::Relaxed);
+    }
+    if !shown {
         return;
     }
     let mut tuning = frame_tuning();
@@ -39,7 +45,7 @@ pub(super) fn draw_party_frame_tuning(ui: &Ui) {
     }
     ui.text("values in 1080p reference pixels:");
     ui.text(tuning.as_text());
-    if ui.button("reset to defaults") {
+    if line_button(ui, "reset to defaults", false, true) {
         reset_frame_tuning();
         save_frame_tuning();
     }

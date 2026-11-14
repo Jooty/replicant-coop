@@ -22,6 +22,9 @@ pub enum PartnerBody {
     SeedKaineE,
 }
 
+pub const HOST_BODY: PartnerBody = PartnerBody::Nier;
+pub const GUEST_BODY: PartnerBody = PartnerBody::SeedKaineE;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BodyPackName(String);
 

@@ -1,9 +1,15 @@
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relayed<M> {
+    pub from: u8,
+    pub message: M,
+}
+
 #[derive(Debug)]
 pub struct RelayInbox<M> {
-    items: Mutex<VecDeque<M>>,
+    items: Mutex<VecDeque<Relayed<M>>>,
     capacity: usize,
 }
 
@@ -15,18 +21,27 @@ impl<M> RelayInbox<M> {
         }
     }
 
-    pub fn push(&self, message: M) {
+    pub fn push(&self, from: u8, message: M) {
         let mut items = self.items.lock().unwrap_or_else(PoisonError::into_inner);
         if items.len() >= self.capacity {
             items.pop_front();
         }
-        items.push_back(message);
+        items.push_back(Relayed { from, message });
     }
 
+    /// Removes the waiting messages `wanted` accepts, oldest first, without their senders.
     pub fn take_matching(&self, wanted: impl Fn(&M) -> bool) -> Vec<M> {
+        self.take_matching_from(wanted)
+            .into_iter()
+            .map(|relayed| relayed.message)
+            .collect()
+    }
+
+    pub fn take_matching_from(&self, wanted: impl Fn(&M) -> bool) -> Vec<Relayed<M>> {
         let mut items = self.items.lock().unwrap_or_else(PoisonError::into_inner);
-        let (taken, kept): (VecDeque<M>, VecDeque<M>) =
-            items.drain(..).partition(|message| wanted(message));
+        let (taken, kept): (VecDeque<Relayed<M>>, VecDeque<Relayed<M>>) = items
+            .drain(..)
+            .partition(|relayed| wanted(&relayed.message));
         *items = kept;
         taken.into()
     }

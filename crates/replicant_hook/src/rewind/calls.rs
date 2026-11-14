@@ -33,6 +33,7 @@ pub(crate) fn rewind_now(build: &VerifiedBuild) -> bool {
     }
     let map_manager = (build.module_base() + u64::from(MAP_MANAGER_RVA)) as *mut c_void;
     let restart = (build.module_base() + u64::from(RESTART_PHASE_RVA)) as usize;
+    crate::teleport::note_mod_move();
     #[expect(
         unsafe_code,
         reason = "calls the game's save block restore and phase restart"

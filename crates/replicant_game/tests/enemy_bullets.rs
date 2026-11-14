@@ -2,11 +2,14 @@ use std::collections::HashMap;
 
 use replicant_game::bullet_flights::SightedBullet;
 use replicant_game::enemy_bullets::{
-    BULLET_SPRITE_FRAME_COUNT, ENEMY_BULLET_STALE_MS, EnemyBullet, EnemyBulletBoard,
-    EnemyBulletCensus, EnemyBulletKinds, EnemyBulletSender, EnemyBulletStep,
-    MAX_ENEMY_BULLET_MOVES_SENT_PER_SCAN, MAX_SHOWN_ENEMY_BULLETS, MAX_SIGHTED_ENEMY_BULLETS,
-    MAX_SIGHTED_ENEMY_SPRITE_BULLETS, MAX_SPRITE_BULLET_KINDS_LOGGED, SpriteBulletKinds,
-    bullets_of_enemies, first_sprite_frame, next_sprite_frame, scan_enemy_bullets,
+    BULLET_SPRITE_FRAME_COUNT, BeamEnd, ENEMY_BULLET_STALE_MS, EnemyBullet, EnemyBulletBoard,
+    EnemyBulletCensus, EnemyBulletKinds, EnemyBulletSender, EnemyBulletStep, FlightRefusals,
+    LaserBeam, LaserBeamTally, MAX_ENEMY_BULLET_MOVES_SENT_PER_SCAN,
+    MAX_SHOWN_BULLET_EFFECTS_LOGGED, MAX_SHOWN_ENEMY_BULLETS, MAX_SIGHTED_ENEMY_BULLETS,
+    MAX_SIGHTED_ENEMY_SPRITE_BULLETS, MAX_SPRITE_BULLET_KINDS_LOGGED,
+    SCRIPT_BULLET_LASER_FLAG_OFFSET, ShownEffectTally, SpriteBulletKinds, UncopiedScriptBullet,
+    UncopiedTally, UncopiedWhy, bullets_of_enemies, first_sprite_frame, longest_axis, look_resized,
+    look_scale, next_sprite_frame, scan_enemy_bullets,
 };
 use replicant_game::offsets::{
     ACTOR_ANCHOR_OFFSET_OFFSET, ACTOR_SELF_HANDLE_OFFSET, ACTOR_TRANSFORM_BLOCK_BYTES,
@@ -19,9 +22,10 @@ use replicant_game::offsets::{
     NORMAL_BULLET_STATE_OFFSET, NORMAL_BULLET_VTABLE_RVA,
     SCRIPT_BULLET_EFFECT_OBJECT_EFFECT_ID_OFFSET, SCRIPT_BULLET_EFFECT_OBJECT_HANDLE_OFFSET,
     SCRIPT_BULLET_EFFECT_OBJECT_POINTER_OFFSET, SCRIPT_BULLET_LOOP_EFFECT_VTABLE_RVA,
-    SCRIPT_BULLET_SPRITE_ALPHA_OFFSET, SCRIPT_BULLET_SPRITE_ANGLE_RADIANS_OFFSET,
-    SCRIPT_BULLET_SPRITE_EFFECT_VTABLE_RVA, SCRIPT_BULLET_SPRITE_KIND_OFFSET,
-    SCRIPT_BULLET_SPRITE_SIZE_OFFSET, SCRIPT_BULLET_TO_SENIOR_EFFECT_VTABLE_RVA,
+    SCRIPT_BULLET_SENIOR_HANDLE_OFFSET, SCRIPT_BULLET_SPRITE_ALPHA_OFFSET,
+    SCRIPT_BULLET_SPRITE_ANGLE_RADIANS_OFFSET, SCRIPT_BULLET_SPRITE_EFFECT_VTABLE_RVA,
+    SCRIPT_BULLET_SPRITE_KIND_OFFSET, SCRIPT_BULLET_SPRITE_SIZE_OFFSET,
+    SCRIPT_BULLET_TO_SENIOR_EFFECT_LENGTH_OFFSET, SCRIPT_BULLET_TO_SENIOR_EFFECT_VTABLE_RVA,
     SCRIPT_BULLET_VTABLE_RVA, TRACE_BULLET_VTABLE_RVA,
 };
 use replicant_proto::{
@@ -304,6 +308,8 @@ fn sighting(enemy: EnemyId, slot: u16, hit_id: i32, x: f32) -> EnemyBullet {
             },
         },
         sprite: None,
+        beam: None,
+        scale_growth_per_second: 0.0,
     }
 }
 
@@ -328,6 +334,7 @@ fn flight(instance: u16, with_look: bool, ended: bool) -> EnemyBulletFlight {
             ended,
         },
         sprite: None,
+        scale_growth_per_second: 0.0,
     }
 }
 
@@ -717,6 +724,51 @@ fn a_bullet_the_guest_follows_gets_its_look_again_every_few_moves() {
     assert_eq!(with_look, expected);
 }
 
+fn widening_sighting(slot: u16, scale: f32) -> EnemyBullet {
+    let mut seen = sighting(SHADE_ID, slot, 1, 0.0);
+    seen.bullet.look.styles[0] = [1.0, 1.0, 1.0, 1.0, scale, scale, scale, 0.0];
+    seen
+}
+
+#[test]
+fn a_widening_bullet_sends_its_look_on_every_move_while_its_effects_grow() {
+    let mut sender = EnemyBulletSender::default();
+    let scales = [1.4, 2.6, 3.8, 5.0, 5.0, 5.0];
+    let mut with_look = Vec::new();
+    let mut resized = Vec::new();
+    for (scan, scale) in (0_u64..).zip(scales) {
+        let sent = sender.update(&[widening_sighting(140, scale)], 1000 + scan * 50);
+        with_look.push(sent[0].flight.look.is_some());
+        resized.push(sender.resized_in_last_update().to_vec());
+    }
+    assert_eq!(with_look, [true, true, true, true, false, false]);
+    assert_eq!(
+        resized,
+        [
+            vec![],
+            vec![(140, 2.6)],
+            vec![(140, 3.8)],
+            vec![(140, 5.0)],
+            vec![],
+            vec![]
+        ]
+    );
+}
+
+#[test]
+fn a_look_is_resized_only_when_a_scale_changes_and_its_scale_is_the_largest_styled_axis() {
+    let small = widening_sighting(1, 1.4).bullet.look;
+    let mut recoloured = small;
+    recoloured.styles[0][0] = 0.2;
+    let wide = widening_sighting(1, 9.8).bullet.look;
+    assert!(!look_resized(&small, &recoloured));
+    assert!(look_resized(&small, &wide));
+    assert!((look_scale(&wide) - 9.8).abs() < f32::EPSILON);
+    let mut unstyled = wide;
+    unstyled.styles[0][3] = 0.0;
+    assert!(look_scale(&unstyled).abs() < f32::EPSILON);
+}
+
 #[test]
 fn a_sent_enemy_bullet_carries_its_enemy_from_first_flight_to_end() {
     let mut sender = EnemyBulletSender::default();
@@ -816,4 +868,299 @@ fn each_enemy_bullet_kind_is_logged_once() {
     assert!(kinds.first_sighting(EFFECT_IDS));
     assert!(!kinds.first_sighting(EFFECT_IDS));
     assert!(kinds.first_sighting([0x245, 0, 0, 0]));
+}
+
+#[test]
+fn each_script_bullet_with_nothing_to_copy_says_why_and_whether_it_is_a_laser() {
+    let mut memory = world();
+    let laser = pooled_bullet_of_class(&mut memory, 0, SHADE_SLOT, SCRIPT_BULLET_VTABLE_RVA);
+    memory.put(laser + SCRIPT_BULLET_LASER_FLAG_OFFSET, &[0]);
+    let gone = pooled_bullet_of_class(&mut memory, 2, SHADE_SLOT, SCRIPT_BULLET_VTABLE_RVA);
+    memory.put(gone + SCRIPT_BULLET_LASER_FLAG_OFFSET, &[1]);
+    effect_object(
+        &mut memory,
+        gone,
+        2,
+        SCRIPT_BULLET_LOOP_EFFECT_VTABLE_RVA,
+        LOOP_EFFECT_ID,
+        INVALID_EFFECT_HANDLE,
+    );
+    let bad_id = script_bullet_with_effect(
+        &mut memory,
+        3,
+        OTHER_SHADE_SLOT,
+        SCRIPT_BULLET_LOOP_EFFECT_VTABLE_RVA,
+    );
+    let bad_id_effect = live_effect(&mut memory, 12);
+    effect_object(
+        &mut memory,
+        bad_id,
+        3,
+        SCRIPT_BULLET_LOOP_EFFECT_VTABLE_RVA,
+        0x5000,
+        bad_id_effect,
+    );
+    let unknown_class = script_bullet_with_effect(
+        &mut memory,
+        4,
+        SHADE_SLOT,
+        SCRIPT_BULLET_LOOP_EFFECT_VTABLE_RVA,
+    );
+    let unknown_class_effect = live_effect(&mut memory, 16);
+    effect_object(
+        &mut memory,
+        unknown_class,
+        4,
+        NORMAL_BULLET_VTABLE_RVA,
+        LOOP_EFFECT_ID,
+        unknown_class_effect,
+    );
+    script_bullet_with_effect(
+        &mut memory,
+        5,
+        SHADE_SLOT,
+        SCRIPT_BULLET_LOOP_EFFECT_VTABLE_RVA,
+    );
+    let scan = scan_enemy_bullets(&memory, &shared_shades()).unwrap();
+    assert_eq!(scan.bullets.len(), 1);
+    assert_eq!(
+        scan.uncopied,
+        vec![
+            UncopiedScriptBullet {
+                enemy: SHADE_ID,
+                why: UncopiedWhy::NoEffectObject,
+                laser: true,
+            },
+            UncopiedScriptBullet {
+                enemy: SHADE_ID,
+                why: UncopiedWhy::EffectGone {
+                    effect_id: LOOP_EFFECT_ID
+                },
+                laser: false,
+            },
+            UncopiedScriptBullet {
+                enemy: OTHER_SHADE_ID,
+                why: UncopiedWhy::EffectIdOutOfRange { effect_id: 0x5000 },
+                laser: false,
+            },
+            UncopiedScriptBullet {
+                enemy: SHADE_ID,
+                why: UncopiedWhy::UnknownEffectObject {
+                    vtable_rva: NORMAL_BULLET_VTABLE_RVA
+                },
+                laser: false,
+            },
+        ]
+    );
+}
+
+#[test]
+fn an_uncopied_kind_is_named_once_and_the_summary_keeps_the_most_at_once() {
+    let laser = UncopiedScriptBullet {
+        enemy: SHADE_ID,
+        why: UncopiedWhy::NoEffectObject,
+        laser: true,
+    };
+    let mut tally = UncopiedTally::default();
+    let first = tally.add_scan(&[laser, laser]);
+    assert_eq!(
+        first,
+        vec![
+            "enemy bullets: first script bullet with no effect to copy from enemy 3:1: with no effect object, spawned as a laser"
+                .to_owned()
+        ]
+    );
+    assert!(tally.add_scan(&[laser, laser, laser]).is_empty());
+    assert!(tally.add_scan(&[laser]).is_empty());
+    assert_eq!(
+        tally.take_summary().as_deref(),
+        Some(
+            "enemy bullets: last 5 s script bullets with no effect to copy, most at once: 3 from 3:1 with no effect object, spawned as a laser"
+        )
+    );
+    assert_eq!(tally.take_summary(), None);
+}
+
+fn place_actor(memory: &mut FakeMemory, actor: u64, position: [f32; 3]) {
+    let mut transform = [0.0_f32; 12];
+    transform[0] = 1.0;
+    transform[5] = 1.0;
+    transform[10] = 1.0;
+    transform[3] = position[0];
+    transform[7] = position[1];
+    transform[11] = position[2];
+    memory.put(
+        actor + ACTOR_TRANSFORM_BLOCK_OFFSET,
+        &floats_as_bytes(&transform),
+    );
+}
+
+fn laser_beam_world(far_end_spawned_as_laser: bool) -> (FakeMemory, u64) {
+    let mut memory = world();
+    let beam = script_bullet_with_effect(
+        &mut memory,
+        0,
+        SHADE_SLOT,
+        SCRIPT_BULLET_TO_SENIOR_EFFECT_VTABLE_RVA,
+    );
+    let object = EFFECT_OBJECT_HEAP;
+    memory.put(
+        object + SCRIPT_BULLET_TO_SENIOR_EFFECT_LENGTH_OFFSET,
+        &2.0_f32.to_le_bytes(),
+    );
+    let far_end = pooled_bullet_of_class(&mut memory, 1, SHADE_SLOT, SCRIPT_BULLET_VTABLE_RVA);
+    let flag = u8::from(!far_end_spawned_as_laser);
+    memory.put(far_end + SCRIPT_BULLET_LASER_FLAG_OFFSET, &[flag]);
+    memory.put(
+        beam + SCRIPT_BULLET_SENIOR_HANDLE_OFFSET,
+        &handle_bytes(FIRST_BULLET_SLOT + 1),
+    );
+    place_actor(&mut memory, beam, [0.0, 2.0, 0.0]);
+    place_actor(&mut memory, far_end, [0.0, 2.0, 30.0]);
+    (memory, beam)
+}
+
+fn beam_sighting(slot: u16, stretch: f32) -> EnemyBullet {
+    let mut seen = sighting(SHADE_ID, slot, 1, 5.0);
+    seen.bullet.transform[0] = 1.0;
+    seen.bullet.transform[5] = 1.0;
+    seen.bullet.transform[10] = stretch;
+    seen.bullet.look.effect_ids = [8059, 0, 0, 0];
+    seen.beam = Some(LaserBeam {
+        far_end: BeamEnd::SpawnedAsLaser,
+        length: stretch * 2.0,
+        effect_length: 2.0,
+    });
+    seen
+}
+
+#[test]
+fn a_script_bullet_whose_effect_is_stretched_to_its_senior_is_sighted_as_a_laser_beam() {
+    let (memory, beam) = laser_beam_world(true);
+    let scan = scan_enemy_bullets(&memory, &shared_shades()).unwrap();
+    assert_eq!(scan.bullets.len(), 1);
+    assert_eq!(scan.bullets[0].bullet.actor, beam);
+    assert_eq!(
+        scan.bullets[0].beam,
+        Some(LaserBeam {
+            far_end: BeamEnd::SpawnedAsLaser,
+            length: 30.0,
+            effect_length: 2.0,
+        })
+    );
+    assert_eq!(scan.uncopied.len(), 1);
+    assert!(scan.uncopied[0].laser);
+    let (plain_memory, _) = laser_beam_world(false);
+    let plain = scan_enemy_bullets(&plain_memory, &shared_shades()).unwrap();
+    assert_eq!(
+        plain.bullets[0].beam.map(|beam| beam.far_end),
+        Some(BeamEnd::PlainScriptBullet)
+    );
+}
+
+#[test]
+fn a_beam_whose_senior_is_gone_is_still_a_beam_and_a_looping_effect_is_not_one() {
+    let (mut memory, beam) = laser_beam_world(true);
+    memory.put(beam + SCRIPT_BULLET_SENIOR_HANDLE_OFFSET, &[0xFF; 8]);
+    let scan = scan_enemy_bullets(&memory, &shared_shades()).unwrap();
+    assert_eq!(
+        scan.bullets[0].beam.map(|beam| beam.far_end),
+        Some(BeamEnd::Gone)
+    );
+    let mut looping_world = world();
+    script_bullet_with_effect(
+        &mut looping_world,
+        0,
+        SHADE_SLOT,
+        SCRIPT_BULLET_LOOP_EFFECT_VTABLE_RVA,
+    );
+    let looping = scan_enemy_bullets(&looping_world, &shared_shades()).unwrap();
+    assert_eq!(looping.bullets[0].beam, None);
+}
+
+#[test]
+fn the_longest_axis_of_a_bullet_is_one_unscaled_and_the_stretch_for_a_beam() {
+    let mut transform = [0.0_f32; 12];
+    transform[0] = 1.0;
+    transform[5] = 1.0;
+    transform[10] = 1.0;
+    transform[3] = 500.0;
+    assert_eq!(longest_axis(&transform), 1.0);
+    transform[2] = 18.0;
+    transform[6] = 0.0;
+    transform[10] = 24.0;
+    assert_eq!(longest_axis(&transform), 30.0);
+}
+
+#[test]
+fn a_stretched_beam_is_sent_on_every_scan_and_passes_the_wire_check() {
+    let mut sender = EnemyBulletSender::default();
+    for scan in 0..5_u64 {
+        let flights = sender.update(&[beam_sighting(40, 30.0 + scan as f32)], scan * 50);
+        assert_eq!(flights.len(), 1);
+        assert_eq!(flights[0].validate(), Ok(()));
+    }
+}
+
+#[test]
+fn the_beam_tally_names_each_beam_kind_once_and_counts_beams_sent() {
+    let mut tally = LaserBeamTally::default();
+    assert_eq!(tally.take_summary(), None);
+    let first = tally.add_scan(&[beam_sighting(40, 15.0), sighting(SHADE_ID, 41, 1, 0.0)]);
+    assert_eq!(
+        first,
+        vec![
+            "enemy bullets: first laser beam from enemy 3:1: effect 8059 stretched to a bullet spawned as a laser, 30.0 units long over an effect length of 2.00 (longest axis 15.0)"
+                .to_owned()
+        ]
+    );
+    assert!(tally.add_scan(&[beam_sighting(40, 20.0)]).is_empty());
+    tally.note_sent(40);
+    tally.note_sent(40);
+    tally.note_sent(41);
+    assert_eq!(
+        tally.take_summary().as_deref(),
+        Some(
+            "enemy bullets: last 5 s laser beams: 1 in the air (most at once 1), 1 of them sent in 2 flight messages, longest 40.0 units (longest axis 20.0)"
+        )
+    );
+    assert_eq!(tally.take_summary(), None);
+    assert!(tally.add_scan(&[beam_sighting(42, 1.0)]).is_empty());
+}
+
+#[test]
+fn flights_that_fail_the_wire_check_are_counted_by_reason() {
+    let mut refusals = FlightRefusals::default();
+    assert_eq!(refusals.take_summary(), None);
+    refusals.note("bullet transform is out of range".to_owned());
+    refusals.note("bullet transform is out of range".to_owned());
+    refusals.note("bullet style is out of range".to_owned());
+    assert_eq!(
+        refusals.take_summary().as_deref(),
+        Some(
+            "enemy bullets: last 5 s 3 flights failed the wire check and were not sent: bullet style is out of range x1, bullet transform is out of range x2"
+        )
+    );
+    assert_eq!(refusals.take_summary(), None);
+}
+
+#[test]
+fn the_guest_counts_shown_bullets_by_effect_with_their_longest_axis() {
+    let mut tally = ShownEffectTally::default();
+    assert_eq!(tally.take_summary(), None);
+    let beam = beam_sighting(40, 12.0).bullet.transform;
+    tally.note_start(8059, &beam);
+    tally.note_move(8059, &beam_sighting(40, 31.5).bullet.transform);
+    tally.note_move(8059, &beam);
+    assert_eq!(
+        tally.take_summary().as_deref(),
+        Some(
+            "enemy bullets: last 5 s shown by effect id: 8059: 1 started, 2 moves, longest axis 31.5"
+        )
+    );
+    for effect_id in 0..=MAX_SHOWN_BULLET_EFFECTS_LOGGED as i32 {
+        tally.note_start(effect_id, &beam);
+    }
+    let line = tally.take_summary().unwrap();
+    assert!(line.ends_with(" and 1 more"), "{line}");
 }

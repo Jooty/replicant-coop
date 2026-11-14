@@ -35,7 +35,7 @@ pub(super) fn draw_party_frame(ui: &Ui) {
     if !party_frame_visible(view.options.show_party_frame, local_in_cutscene()) {
         return;
     }
-    let Some(remote) = view.remote.as_ref() else {
+    let Some(remote) = view.partner_state() else {
         return;
     };
     let status = status_of(&view);
@@ -114,7 +114,7 @@ pub(super) fn draw_party_frame(ui: &Ui) {
 }
 
 fn status_of(view: &NetShared) -> PartyStatus {
-    let remote = view.remote.as_ref();
+    let remote = view.partner_state();
     party_status(
         remote.is_some(),
         remote.map_or(0, |remote| remote.age().as_millis() as u64),

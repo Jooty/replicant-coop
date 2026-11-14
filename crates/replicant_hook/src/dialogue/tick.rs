@@ -92,7 +92,7 @@ pub fn tick_dialogue(build: &VerifiedBuild) {
     }
     let own_talk_line = share_own_talk(net, &view, memory, own_window_open);
     let mut mirror = MIRROR.lock().unwrap_or_else(PoisonError::into_inner);
-    let in_range = view.remote.as_ref().is_some_and(|remote| {
+    let in_range = view.partner_state().is_some_and(|remote| {
         local_phase_index(&game) == Some(remote.state.phase)
             && game.position().is_ok_and(|local| {
                 let [x, y, z] = remote.state.position;
@@ -176,7 +176,7 @@ pub fn tick_dialogue(build: &VerifiedBuild) {
             slot_one_mask,
             taken_over,
         });
-    apply_hold(build, hold_action, view.peer_name.as_deref());
+    apply_hold(build, hold_action, view.partner_name());
 }
 
 fn host_leads_script_talk_from_afar(
@@ -189,8 +189,7 @@ fn host_leads_script_talk_from_afar(
 ) -> bool {
     let host_on_same_talk = role == FollowRole::Guest
         && view
-            .remote
-            .as_ref()
+            .partner_state()
             .is_some_and(|remote| local_phase_index(game) == Some(remote.state.phase))
         && own_talk.is_some_and(|own| {
             PARTNER_TALK
@@ -315,6 +314,11 @@ fn apply_hold(build: &VerifiedBuild, action: Option<WatcherHoldAction>, partner:
     }
 }
 
+/// This player's own talk window is open (a window that only mirrors the partner's talk is not).
+pub(crate) fn own_talk_window_open() -> bool {
+    OWN_TALK_WINDOW_WAS_OPEN.load(Ordering::Relaxed)
+}
+
 pub(super) fn own_talk_line() -> Option<DialogueLine> {
     TRACKER
         .lock()
@@ -341,6 +345,7 @@ fn receive_partner_lines(net: &NetThread) {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .receive(update, net_clock_ms());
+        crate::kaine::scene_stand_in_partner_talk(update);
         match update {
             DialogueUpdate::Line(line) => log_line(&format!(
                 "dialogue: partner on talk {} line {}",

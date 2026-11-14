@@ -59,7 +59,7 @@ impl<G: NetGame> NetThread<G> {
         let _ = self.snapshots.send(snapshot);
     }
 
-    /// Queues a game message for the other player; dropped unless a peer is connected.
+    /// Queues a game message for the other player; dropped unless another player is in play.
     pub fn send_relayed(&self, message: G::Message) {
         let _ = self.relay_outbox.send(message);
     }
@@ -67,6 +67,15 @@ impl<G: NetGame> NetThread<G> {
     /// Removes and returns the waiting game messages `wanted` accepts, oldest first; others stay queued.
     pub fn take_relayed(&self, wanted: impl Fn(&G::Message) -> bool) -> Vec<G::Message> {
         self.relay_inbox.take_matching(wanted)
+    }
+
+    /// As [`Self::take_relayed`], each message with the slot of the player who sent it.
+    pub fn take_relayed_from(&self, wanted: impl Fn(&G::Message) -> bool) -> Vec<(u8, G::Message)> {
+        self.relay_inbox
+            .take_matching_from(wanted)
+            .into_iter()
+            .map(|relayed| (relayed.from, relayed.message))
+            .collect()
     }
 
     pub fn send_to_launcher(&self, message: G::Message) {

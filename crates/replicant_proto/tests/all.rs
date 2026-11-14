@@ -4,10 +4,16 @@ mod attack_gauge_wire;
 mod block_held_wire;
 #[path = "block_moved_wire.rs"]
 mod block_moved_wire;
+#[path = "bomb_sync_wire.rs"]
+mod bomb_sync_wire;
 #[path = "bullet_flight_wire.rs"]
 mod bullet_flight_wire;
 #[path = "callback_fired_wire.rs"]
 mod callback_fired_wire;
+#[path = "cart_ride_wire.rs"]
+mod cart_ride_wire;
+#[path = "cart_run_wire.rs"]
+mod cart_run_wire;
 #[path = "container_wire.rs"]
 mod container_wire;
 #[path = "desync_wire.rs"]
@@ -26,14 +32,24 @@ mod enemy_bullet_flight_wire;
 mod enemy_combat_wire;
 #[path = "enemy_creation_wire.rs"]
 mod enemy_creation_wire;
+#[path = "enemy_id_list_wire.rs"]
+mod enemy_id_list_wire;
 #[path = "enemy_wire.rs"]
 mod enemy_wire;
+#[path = "fight_camera_wire.rs"]
+mod fight_camera_wire;
 #[path = "fight_stream_wire.rs"]
 mod fight_stream_wire;
 #[path = "follow_phase.rs"]
 mod follow_phase;
+#[path = "game_saved_wire.rs"]
+mod game_saved_wire;
 #[path = "item_counts_wire.rs"]
 mod item_counts_wire;
+#[path = "lift_call_wire.rs"]
+mod lift_call_wire;
+#[path = "member_wire.rs"]
+mod member_wire;
 #[path = "message_handler_wire.rs"]
 mod message_handler_wire;
 #[path = "message_kind.rs"]
@@ -60,8 +76,12 @@ mod scene_follow_wire;
 mod script_message_wire;
 #[path = "script_roll_wire.rs"]
 mod script_roll_wire;
+#[path = "seat_wire.rs"]
+mod seat_wire;
 #[path = "shared_function_wire.rs"]
 mod shared_function_wire;
+#[path = "shot_cue_wire.rs"]
+mod shot_cue_wire;
 #[path = "sky_wire.rs"]
 mod sky_wire;
 #[path = "slot.rs"]

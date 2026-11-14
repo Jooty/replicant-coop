@@ -3,10 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use replicant_proto::PartnerBody;
-
 use nc_launcher_core::{
-    DEFAULT_ENEMY_DAMAGE_PERCENT, DEFAULT_ENEMY_HEALTH_PERCENT, GameProfile,
+    DEFAULT_ENEMY_DAMAGE_PERCENT, DEFAULT_ENEMY_HEALTH_PERCENT, GameProfile, LauncherScale,
     MAX_ENEMY_DAMAGE_PERCENT, MAX_ENEMY_HEALTH_PERCENT, PlayerSettings, REPLICANT, SessionOptions,
 };
 
@@ -18,8 +16,6 @@ pub struct LauncherConfig {
     pub game_dir: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player_name: Option<String>,
-    #[serde(default, skip_serializing_if = "is_nier")]
-    pub body: PartnerBody,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub show_distance: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -52,6 +48,10 @@ pub struct LauncherConfig {
     pub install_id: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub game_dirs: BTreeMap<String, PathBuf>,
+    #[serde(default = "enabled", skip_serializing_if = "is_enabled")]
+    pub motion: bool,
+    #[serde(default, skip_serializing_if = "is_default_scale")]
+    pub scale: LauncherScale,
 }
 
 impl Default for LauncherConfig {
@@ -59,7 +59,6 @@ impl Default for LauncherConfig {
         Self {
             game_dir: None,
             player_name: None,
-            body: PartnerBody::Nier,
             show_distance: false,
             show_ping: false,
             keep_running: true,
@@ -73,6 +72,8 @@ impl Default for LauncherConfig {
             send_logs: true,
             install_id: None,
             game_dirs: BTreeMap::new(),
+            motion: true,
+            scale: LauncherScale::default(),
         }
     }
 }
@@ -191,6 +192,6 @@ fn is_default_enemy_damage_percent(value: &u16) -> bool {
     *value == DEFAULT_ENEMY_DAMAGE_PERCENT
 }
 
-fn is_nier(body: &PartnerBody) -> bool {
-    *body == PartnerBody::Nier
+fn is_default_scale(value: &LauncherScale) -> bool {
+    *value == LauncherScale::default()
 }

@@ -37,12 +37,17 @@ impl LevelCatchUp {
     }
 
     pub fn step(&mut self, now_ms: u64, phase: &str, local: LocalLevel) -> LevelStep {
+        let mut step = LevelStep::default();
+        // Sent in every phase: the swapped body's level follows the host's everywhere.
+        if self.should_send(now_ms, local) {
+            self.last_sent = Some((local, now_ms));
+            step.send = Some(local);
+        }
         if !PROLOGUE_PHASES.contains(&phase) {
-            self.last_sent = None;
             self.last_gain_ms = None;
             self.last_local = None;
             self.levels_taken_away = false;
-            return LevelStep::default();
+            return step;
         }
         // A script that takes experience away ends the prologue; the partner's report predates it.
         if self
@@ -52,11 +57,6 @@ impl LevelCatchUp {
             self.levels_taken_away = true;
         }
         self.last_local = Some(local);
-        let mut step = LevelStep::default();
-        if self.should_send(now_ms, local) {
-            self.last_sent = Some((local, now_ms));
-            step.send = Some(local);
-        }
         if !self.levels_taken_away {
             step.gain = self.gain_now(now_ms, local);
         }

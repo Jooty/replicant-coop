@@ -12,14 +12,15 @@ path = "tests/all.rs"
 
 [features]
 default = ["iroh"]
-iroh = ["dep:iroh", "dep:tokio", "dep:data-encoding"]
+iroh = ["dep:iroh", "dep:tokio", "dep:data-encoding", "dep:futures-lite"]
 
 [dependencies]
 nc_wire = { workspace = true }
 iroh = { workspace = true, optional = true }
-tokio = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["net"] }
 postcard = { workspace = true }
 data-encoding = { workspace = true, optional = true }
+futures-lite = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

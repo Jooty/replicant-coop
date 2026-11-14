@@ -1,5 +1,10 @@
 #[path = "codec.rs"]
 mod codec;
+#[path = "envelope.rs"]
+mod envelope;
+#[path = "member.rs"]
+mod member;
+mod tiny;
 
 use std::collections::BTreeSet;
 use std::path::Path;

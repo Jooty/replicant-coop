@@ -1,9 +1,8 @@
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use replicant_game::GameMemory;
-use replicant_game::kaine::{KAINE_LEVEL_SAVE_OFFSET, sync_kaine_stats};
-use replicant_game::offsets::{ENTITY_LEVEL_OFFSET, ENTITY_RVA};
+use replicant_game::Replicant;
+use replicant_game::kaine::sync_kaine_stats;
 use replicant_proto::PartnerBody;
 
 use crate::build_gate::VerifiedBuild;
@@ -15,7 +14,7 @@ const STATS_SYNC_INTERVAL: Duration = Duration::from_secs(2);
 
 static LAST_SYNC: Mutex<Option<(u32, Instant)>> = Mutex::new(None);
 
-pub(crate) fn match_kaine_stats_to_protagonist(build: &VerifiedBuild) {
+pub(crate) fn match_kaine_stats_to_her_level(build: &VerifiedBuild) {
     let Some(real) = real_body() else {
         return;
     };
@@ -39,29 +38,22 @@ pub(crate) fn match_kaine_stats_to_protagonist(build: &VerifiedBuild) {
     }
 }
 
-pub(crate) fn set_her_level_before_player_is_built(build: &VerifiedBuild) {
+pub(crate) fn log_her_level_before_player_is_built(build: &VerifiedBuild) {
     let Some(real) = real_body() else {
         return;
     };
     if !(real.by_swap && real.body == PartnerBody::SeedKaineE) {
         return;
     }
-    let mut memory = InProcessMemory::new(build);
-    let save = memory.module_base() + u64::from(ENTITY_RVA);
-    let her_level_at = save + KAINE_LEVEL_SAVE_OFFSET as u64;
-    let (Ok(own), Ok(hers)) = (
-        memory.read_i32(save + u64::from(ENTITY_LEVEL_OFFSET)),
-        memory.read_i32(her_level_at),
-    ) else {
+    let game = Replicant::new(InProcessMemory::new(build));
+    let (Ok(level), Ok(experience), Ok(first_body)) =
+        (game.level(), game.experience(), game.first_body_level())
+    else {
         log_line("kaine stats: cannot read the levels before the player is built");
         return;
     };
-    if hers != own && memory.write_i32(her_level_at, own).is_err() {
-        log_line("kaine stats: cannot write her level before the player is built");
-        return;
-    }
     log_line(&format!(
-        "kaine stats: level set from {hers} to {own} before the player is built (phase {})",
+        "kaine stats: her level {level} (exp {experience}) before the player is built (phase {}); the first body's level {first_body} decides nothing",
         real.phase_loads
     ));
 }

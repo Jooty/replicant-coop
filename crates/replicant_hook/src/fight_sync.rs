@@ -1,8 +1,11 @@
+mod camera_follow;
+mod eye_set_callers;
 mod object_arms;
 mod player_waits;
 mod pop;
 mod prompt_follow;
 mod radio_waits;
+mod scripted_camera;
 mod state;
 mod tape;
 mod tick;

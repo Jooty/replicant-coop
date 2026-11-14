@@ -127,7 +127,7 @@ pub(super) fn keep_safe(
         host_facts,
         guest_in_side_view,
         door_action,
-        partner_name: view.peer_name.as_deref().unwrap_or("the host"),
+        partner_name: view.partner_name().unwrap_or("the host"),
     };
     place_after_follow(
         state,
@@ -141,7 +141,7 @@ pub(super) fn keep_safe(
 }
 
 fn fresh_partner(view: &NetShared) -> Option<FreshPartner> {
-    let remote = view.remote.as_ref()?;
+    let remote = view.partner_state()?;
     if !view.partner_in_play() || remote.age() > Duration::from_millis(PARTNER_TIMEOUT_MS) {
         return None;
     }

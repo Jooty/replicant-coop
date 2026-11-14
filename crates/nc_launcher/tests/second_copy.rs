@@ -2,12 +2,11 @@ use std::path::{Path, PathBuf};
 
 use crate::scratch::fresh_dir;
 use nc_launcher::second_copy::{
-    ProtonSetup, body_environment, copy_command, copy_environment, proton_script_from_config_info,
+    ProtonSetup, copy_command, copy_environment, proton_script_from_config_info,
     required_tool_app_id, steam_client_root,
 };
 use nc_launcher::steam::GameInstall;
 use nc_launcher_core::REPLICANT;
-use replicant_proto::PartnerBody;
 
 fn install() -> GameInstall {
     GameInstall {
@@ -165,12 +164,4 @@ fn no_new_game_means_no_new_game_variables() {
     let envs = copy_environment(47300, "Guest", Some(2), None);
     assert_eq!(value(&envs, "NIER_COOP_NEW_GAME_SLOT"), None);
     assert_eq!(value(&envs, "NIER_COOP_NEW_GAME_NAME"), None);
-}
-
-#[test]
-fn the_second_copy_is_told_its_body() {
-    let (key, text) = body_environment(PartnerBody::PrologueCharacter);
-    assert_eq!(key, "NIER_COOP_BODY");
-    assert_eq!(text, "prologue");
-    assert_eq!(body_environment(PartnerBody::Nier).1, "nier");
 }

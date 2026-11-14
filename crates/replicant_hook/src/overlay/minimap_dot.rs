@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use hudhook::imgui::Ui;
+use nc_hook::menu_view::parts::{fold_heading, line_button, switch_line};
 use replicant_game::Replicant;
 use replicant_game::minimap::{
     MINIMAP_CENTER_X_RANGE, MINIMAP_CENTER_Y_RANGE, MINIMAP_DOT_SIZE_RANGE, MINIMAP_RADIUS_RANGE,
@@ -27,6 +28,7 @@ const STATE_ON_EDGE: u8 = 3;
 
 static TUNING: Mutex<MinimapTuning> = Mutex::new(MinimapTuning::new());
 static FALLBACK_FORCED: AtomicBool = AtomicBool::new(false);
+static TUNING_SHOWN: AtomicBool = AtomicBool::new(false);
 static LAST_LOGGED_STATE: AtomicU8 = AtomicU8::new(STATE_UNKNOWN);
 
 pub(super) fn draw_minimap_dot(ui: &Ui, game: Option<&Replicant<InProcessMemory>>) {
@@ -56,12 +58,17 @@ pub(super) fn draw_minimap_dot(ui: &Ui, game: Option<&Replicant<InProcessMemory>
 }
 
 pub(super) fn draw_minimap_tuning(ui: &Ui) {
-    if !ui.collapsing_header("minimap dot", hudhook::imgui::TreeNodeFlags::empty()) {
+    let mut shown = TUNING_SHOWN.load(Ordering::Relaxed);
+    if fold_heading(ui, "minimap dot", &mut shown) {
+        TUNING_SHOWN.store(shown, Ordering::Relaxed);
+    }
+    if !shown {
         return;
     }
     let mut tuning = *TUNING.lock().unwrap_or_else(PoisonError::into_inner);
     let mut forced = FALLBACK_FORCED.load(Ordering::Relaxed);
-    if ui.checkbox(
+    if switch_line(
+        ui,
         "developer: also draw the overlay dot (fallback)",
         &mut forced,
     ) {
@@ -77,8 +84,9 @@ pub(super) fn draw_minimap_tuning(ui: &Ui) {
     } else {
         "game minimap icon: off, the overlay dot is the fallback"
     });
-    let mut changed = ui.checkbox("overlay dot allowed", &mut tuning.enabled);
-    changed |= ui.checkbox(
+    let mut changed = switch_line(ui, "overlay dot allowed", &mut tuning.enabled);
+    changed |= switch_line(
+        ui,
         "minimap turns with the camera",
         &mut tuning.rotate_with_camera,
     );
@@ -97,7 +105,7 @@ pub(super) fn draw_minimap_tuning(ui: &Ui) {
         MINIMAP_WORLD_RANGE_RANGE,
     );
     changed |= slider(ui, "dot size", &mut tuning.dot_size, MINIMAP_DOT_SIZE_RANGE);
-    if ui.button("reset minimap dot") {
+    if line_button(ui, "reset minimap dot", false, true) {
         tuning = MinimapTuning::new();
         changed = true;
     }

@@ -227,6 +227,7 @@ fn guest_facts(host: Option<HostGaugeView>, local: Option<LocalGaugeView>) -> Gu
         boss_copy_found: true,
         partner_copy_found: true,
         local_only_for_ms: 0,
+        asked_host: false,
         switched_off: false,
     }
 }
@@ -305,7 +306,7 @@ fn the_guest_closes_a_gauge_for_another_opening_or_boss() {
 }
 
 #[test]
-fn the_guest_closes_when_the_host_closed_and_a_guest_only_gauge_after_a_grace() {
+fn the_guest_closes_when_the_host_closed_and_an_unshared_guest_only_gauge_after_a_grace() {
     let mirrored = LocalGaugeView {
         boss: Some(BOSS),
         mirrored_serial: Some(4),
@@ -315,7 +316,7 @@ fn the_guest_closes_when_the_host_closed_and_a_guest_only_gauge_after_a_grace() 
         GuestGaugeStep::CloseHostClosed
     );
     let own = LocalGaugeView {
-        boss: Some(BOSS),
+        boss: None,
         mirrored_serial: None,
     };
     assert_eq!(

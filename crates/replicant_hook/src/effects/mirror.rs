@@ -19,7 +19,7 @@ use crate::effects::calls::{
 use crate::effects::hooks::{note_partner_hit_effect_played, send_ended_effects, set_sending};
 use crate::effects::report::{
     DROPPED_WITHOUT_PUPPET, PLAY_FAILED, PLAYED_EFFECTS, PLAYED_SOUNDS, PLAYED_STOPS,
-    SILENCED_BY_DISTANCE, count, log_limited, log_summary,
+    SILENCED_BY_DISTANCE, count, log_limited, log_summary, note_world_effect_shown,
 };
 use crate::effects::voice::{
     forget_sent_character, play_as_partner_character, remember_partner_character,
@@ -174,6 +174,7 @@ impl Mirror {
             }
             Message::WorldEffect(effect) => match spawn_world_effect(build, &effect) {
                 Some(handle) => {
+                    note_world_effect_shown(&effect.effect, true);
                     note_partner_hit_effect_played();
                     count(&PLAYED_EFFECTS);
                     log_limited(&format!(
@@ -193,6 +194,7 @@ impl Mirror {
                     }
                 }
                 None => {
+                    note_world_effect_shown(&effect.effect, false);
                     count(&PLAY_FAILED);
                     log_limited(&format!(
                         "effects: world effect {} was not created",

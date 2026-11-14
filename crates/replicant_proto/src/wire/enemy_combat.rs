@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::wire::{
-    EnemyId, MAX_HIT_DAMAGE, MAX_ITEM_COUNT, MAX_POSITION_ABS, MAX_WORD_ID, WireError,
+    EnemyId, MAX_HIT_DAMAGE, MAX_HIT_PUSH_STRENGTH, MAX_ITEM_COUNT, MAX_POSITION_ABS, MAX_WORD_ID,
+    WireError,
 };
 
 /// The guest's hit on its copy of a host enemy, as the guest's game computed it (before the
@@ -19,8 +20,9 @@ pub struct EnemyHit {
 }
 
 /// A host enemy's hit that landed on the guest's body in the host's game. The guest applies it to
-/// its own player, so its guard, dodge and downed rules decide what it does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// its own player, so its guard, dodge and downed rules decide what it does; the reaction bits of
+/// `flags`, `push` and `direction` make its body react as the host's record says.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlayerHit {
     pub phase: u16,
     pub attacker: EnemyId,
@@ -28,6 +30,10 @@ pub struct PlayerHit {
     pub flags: u32,
     pub attack_kind: u32,
     pub hit_id: u32,
+    /// The record's push strength (its float at `+0x74`).
+    pub push: f32,
+    /// The record's hit direction in world space (`+0x90`), zero when the game left it unset.
+    pub direction: [f32; 3],
 }
 
 /// A host enemy died. `by_guest` is true when the guest's reported hit was the killing blow.
@@ -82,6 +88,18 @@ impl PlayerHit {
         if self.hp_damage > MAX_HIT_DAMAGE {
             return Err(WireError::OutOfRange {
                 field: "hit_damage",
+            });
+        }
+        if !(0.0..=MAX_HIT_PUSH_STRENGTH).contains(&self.push) {
+            return Err(WireError::OutOfRange { field: "hit push" });
+        }
+        if self
+            .direction
+            .iter()
+            .any(|axis| !axis.is_finite() || axis.abs() > MAX_POSITION_ABS)
+        {
+            return Err(WireError::OutOfRange {
+                field: "hit direction",
             });
         }
         Ok(())

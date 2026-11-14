@@ -1,6 +1,8 @@
 use replicant_proto::EnemyId;
 
-use crate::attack_gauge::{GUEST_GAUGE_REMAINING_FLOOR_SECONDS, GUEST_ONLY_GAUGE_GRACE_MS};
+use crate::attack_gauge::{
+    GUEST_ASKED_GAUGE_GRACE_MS, GUEST_GAUGE_REMAINING_FLOOR_SECONDS, GUEST_ONLY_GAUGE_GRACE_MS,
+};
 
 /// The host's open gauge as the guest last heard it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +29,7 @@ pub struct GuestGaugeFacts {
     pub boss_copy_found: bool,
     pub partner_copy_found: bool,
     pub local_only_for_ms: u64,
+    pub asked_host: bool,
     pub switched_off: bool,
 }
 
@@ -35,12 +38,14 @@ pub enum GuestGaugeWait {
     BossCopyMissing,
     PartnerCopyMissing,
     GuestOnlyGrace,
+    HostAsked,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GuestGaugeStep {
     Nothing,
     Open,
+    AskHost,
     Mirror,
     CloseHostClosed,
     CloseOtherOpening,
@@ -51,7 +56,8 @@ pub enum GuestGaugeStep {
 
 /// What the guest does with its own gauge this tick. The host's gauge decides: the guest opens one
 /// like it on its copy of the boss, follows the same opening, and closes its own when the host's
-/// closed, is another opening, or never came (after a grace, as the host's may be on its way).
+/// closed or is another opening. A gauge the guest's own game opened on a shared boss is asked of
+/// the host once; it closes when the host's never came (after a grace).
 pub fn guest_gauge_step(facts: &GuestGaugeFacts) -> GuestGaugeStep {
     if facts.switched_off {
         return GuestGaugeStep::LeaveToGame;
@@ -60,7 +66,15 @@ pub fn guest_gauge_step(facts: &GuestGaugeFacts) -> GuestGaugeStep {
     match (host, facts.local) {
         (None, None) => GuestGaugeStep::Nothing,
         (None, Some(local)) if local.mirrored_serial.is_some() => GuestGaugeStep::CloseHostClosed,
-        (None, Some(_)) if facts.local_only_for_ms < GUEST_ONLY_GAUGE_GRACE_MS => {
+        (None, Some(local)) if local.boss.is_some() && !facts.asked_host => GuestGaugeStep::AskHost,
+        (None, Some(_))
+            if facts.asked_host && facts.local_only_for_ms < GUEST_ASKED_GAUGE_GRACE_MS =>
+        {
+            GuestGaugeStep::Wait(GuestGaugeWait::HostAsked)
+        }
+        (None, Some(_))
+            if !facts.asked_host && facts.local_only_for_ms < GUEST_ONLY_GAUGE_GRACE_MS =>
+        {
             GuestGaugeStep::Wait(GuestGaugeWait::GuestOnlyGrace)
         }
         (None, Some(_)) => GuestGaugeStep::CloseHostHasNone,

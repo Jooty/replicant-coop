@@ -71,23 +71,28 @@ fn nothing_changes_while_she_is_not_the_player() {
 }
 
 #[test]
-fn her_level_and_maximums_follow_the_protagonists_and_current_values_are_capped() {
+fn her_maximums_follow_her_own_level_and_current_values_are_capped() {
     let mut memory = world(1);
     let synced = sync_kaine_stats(&mut memory).unwrap().unwrap();
-    assert_eq!((synced.health, synced.max_health), (300, 300));
-    assert_eq!((synced.magic, synced.max_magic), (50.0, 50.0));
-    let save = FAKE_MODULE_BASE + u64::from(ENTITY_RVA);
-    assert_eq!(
-        memory
-            .read_i32(save + KAINE_LEVEL_SAVE_OFFSET as u64)
-            .unwrap(),
-        PROTAGONIST_LEVEL
-    );
+    assert_eq!((synced.health, synced.max_health), (900, 2000));
+    assert_eq!((synced.magic, synced.max_magic), (90.0, 200.0));
     assert_eq!(
         memory
             .read_i32(FAKE_MODULE_BASE + u64::from(PLAYER_PARAM_ARRAY_RVA) + 0x30)
             .unwrap(),
-        30
+        200
+    );
+}
+
+#[test]
+fn the_first_bodys_level_is_never_copied_into_hers() {
+    let mut memory = world(1);
+    sync_kaine_stats(&mut memory).unwrap();
+    assert_eq!(
+        memory
+            .read_i32(FAKE_MODULE_BASE + u64::from(ENTITY_RVA) + KAINE_LEVEL_SAVE_OFFSET as u64)
+            .unwrap(),
+        HER_LEVEL
     );
 }
 
@@ -99,12 +104,17 @@ fn once_in_step_nothing_is_written_or_logged_again() {
 }
 
 #[test]
-fn a_protagonist_level_up_is_followed() {
+fn her_own_level_up_is_followed_and_the_first_bodys_decides_nothing() {
     let mut memory = world(1);
     sync_kaine_stats(&mut memory).unwrap();
     memory.put_at_rva(ENTITY_RVA + ENTITY_LEVEL_OFFSET, &HER_LEVEL.to_le_bytes());
+    assert_eq!(sync_kaine_stats(&mut memory).unwrap(), None);
+    memory.put_at_rva(
+        ENTITY_RVA + KAINE_LEVEL_SAVE_OFFSET as u32,
+        &PROTAGONIST_LEVEL.to_le_bytes(),
+    );
     let synced = sync_kaine_stats(&mut memory).unwrap().unwrap();
-    assert_eq!(synced.max_health, 2000);
+    assert_eq!(synced.max_health, 300);
 }
 
 #[test]

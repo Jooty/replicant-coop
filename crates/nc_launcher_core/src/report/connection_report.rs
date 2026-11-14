@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use replicant_proto::RejectReason;
 
+use crate::report::HOST_UNREACHABLE_TEXT;
+
 const GOOD_RTT_MILLIS: f64 = 60.0;
 const FAIR_RTT_MILLIS: f64 = 120.0;
 const GOOD_LOSS_PERCENT: f32 = 2.0;
@@ -41,6 +43,8 @@ pub struct ConnectionReport {
     pub path: PathKind,
     pub rtt: Option<RttStats>,
     pub loss_percent: f32,
+    pub rejected: Option<RejectReason>,
+    pub host_name: Option<String>,
     pub verdict: String,
 }
 
@@ -74,7 +78,7 @@ pub fn judge(
     let Some(rtt) = rtt.filter(|_| reachable) else {
         return Verdict {
             quality: Quality::Unusable,
-            summary: "Could not reach the host. Check that the ticket is current and the host's launcher is running. If you are both behind strict routers, wait a minute and try again.".to_owned(),
+            summary: HOST_UNREACHABLE_TEXT.to_owned(),
         };
     };
     let avg_millis = rtt.avg.as_secs_f64() * 1000.0;
@@ -109,7 +113,10 @@ pub fn judge_rejection_text(reason: RejectReason) -> &'static str {
         RejectReason::VersionMismatch => {
             "The host runs a different launcher version. Both of you need the same release."
         }
-        RejectReason::SessionFull => "The host already has another player.",
+        RejectReason::SessionFull => {
+            "The session is full: the host already plays with another player."
+        }
         RejectReason::Malformed => "The host could not understand the request.",
+        RejectReason::RemovedByHost => "The host removed you from the lobby.",
     }
 }

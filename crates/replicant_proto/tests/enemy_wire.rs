@@ -50,6 +50,7 @@ fn snapshot(enemies: Vec<EnemyState>) -> EnemySnapshot {
         part: 0,
         parts: 1,
         total: u16::try_from(enemies.len()).expect("small"),
+        round: u16::try_from(enemies.len()).expect("small"),
         enemies,
     }
 }
@@ -187,7 +188,7 @@ fn a_companion_has_a_fixed_id_outside_the_script_groups() {
 
 #[test]
 fn a_companion_rides_the_enemy_snapshot_and_takes_hits_by_its_id() {
-    assert_eq!(replicant_proto::PROTOCOL_VERSION, 48);
+    assert_eq!(replicant_proto::PROTOCOL_VERSION, 67);
     for slot in 0..COMPANION_SLOT_COUNT {
         let mut state = widest_enemy();
         state.id = EnemyId::companion(slot);
@@ -230,4 +231,27 @@ fn companion_ids_sort_after_every_script_group_id() {
     };
     assert!(EnemyId::companion(0) > last_enemy);
     assert!(EnemyId::companion(COMPANION_SLOT_COUNT - 1) > EnemyId::companion(0));
+}
+
+#[test]
+fn a_snapshot_whose_round_is_larger_than_the_host_total_is_refused() {
+    let mut part = snapshot(Vec::new());
+    part.total = 3;
+    part.round = 4;
+    assert_eq!(
+        encode(&Message::EnemySnapshot(part)),
+        Err(WireError::OutOfRange {
+            field: "snapshot_round"
+        })
+    );
+}
+
+#[test]
+fn a_snapshot_round_carries_both_numbers_through_a_round_trip() {
+    let mut part = snapshot(vec![enemy(1, 0)]);
+    part.total = 90;
+    part.round = 80;
+    let message = Message::EnemySnapshot(part);
+    let bytes = encode(&message).expect("valid message encodes");
+    assert_eq!(decode(&bytes), Ok(message));
 }

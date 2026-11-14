@@ -17,6 +17,7 @@
 // OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 use crate::game::{ActorModel, GameError, Position};
+use crate::kaine::{KAINE_PLAYER_FLAG_SAVE_OFFSET, LevelFields, level_fields_in_use};
 use crate::memory::GameMemory;
 use crate::offsets::{
     ACTOR_MODEL_RVA, ACTOR_MODEL_TEXT_LEN, ENTITY_GOLD_OFFSET, ENTITY_HEALTH_OFFSET,
@@ -78,15 +79,29 @@ impl<M: GameMemory> Replicant<M> {
         Ok(self.memory.write_f32(address, value)?)
     }
 
+    /// The level the game uses: the swapped body's own copy while it is worn.
     pub fn level(&self) -> Result<i32, GameError> {
+        let field = self.level_fields_in_use().level;
+        Ok(self.memory.read_i32(self.entity_field(field))?)
+    }
+
+    pub fn set_level(&mut self, value: i32) -> Result<(), GameError> {
+        let address = self.entity_field(self.level_fields_in_use().level);
+        Ok(self.memory.write_i32(address, value)?)
+    }
+
+    pub fn first_body_level(&self) -> Result<i32, GameError> {
         Ok(self
             .memory
             .read_i32(self.entity_field(ENTITY_LEVEL_OFFSET))?)
     }
 
-    pub fn set_level(&mut self, value: i32) -> Result<(), GameError> {
-        let address = self.entity_field(ENTITY_LEVEL_OFFSET);
-        Ok(self.memory.write_i32(address, value)?)
+    pub(super) fn level_fields_in_use(&self) -> LevelFields {
+        let flag = self
+            .memory
+            .read_i32(self.entity_field(KAINE_PLAYER_FLAG_SAVE_OFFSET as u32))
+            .unwrap_or_default();
+        level_fields_in_use(flag)
     }
 
     pub fn playtime(&self) -> Result<f64, GameError> {

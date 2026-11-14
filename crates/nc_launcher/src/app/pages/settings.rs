@@ -1,288 +1,54 @@
-use eframe::egui::{self, RichText, Ui};
+use eframe::egui::{Rect, ScrollArea, Ui, UiBuilder, pos2};
 
-use crate::app::style::{BAD, GOOD, MUTED, WARN};
-use crate::app::{Launcher, NetForms, UpdateState, heading_text};
-use crate::install::ModStatus;
-use crate::update::{BUILD_COMMIT, short_commit};
+use crate::app::motion::page_section;
+use crate::app::pages::settings_game::draw_game_section;
+use crate::app::pages::settings_in_game::draw_in_game_section;
+use crate::app::pages::settings_saves::draw_saves_section;
+use crate::app::pages::settings_updates::draw_updates_section;
+use crate::app::pages::settings_window::draw_window_section;
+use crate::app::{Launcher, NetForms};
+
+const SETTINGS_LEFT_SHARE: f32 = 532.0 / 1084.0;
+const SETTINGS_COLUMN_GAP_PX: f32 = 48.0;
+const SETTINGS_SECTION_GAP_PX: f32 = 34.0;
+const SETTINGS_TOP_GAP_PX: f32 = 4.0;
 
 pub(super) fn draw_settings(ui: &mut Ui, launcher: &mut Launcher, forms: &mut NetForms) {
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            draw_game_folder(ui, launcher);
-            ui.separator();
-            draw_install_status(ui, launcher);
-            ui.separator();
-            draw_install_buttons(ui, launcher);
-            ui.separator();
-            draw_player_settings(ui, launcher, forms);
-            ui.separator();
-            draw_updates(ui, launcher);
-            ui.label(format!(
-                "Version {} ({})",
-                env!("CARGO_PKG_VERSION"),
-                short_commit(BUILD_COMMIT)
-            ));
-        });
-}
-
-fn draw_game_folder(ui: &mut Ui, launcher: &mut Launcher) {
-    ui.label(heading_text("Game folder"));
-    let found = launcher
-        .game
-        .as_ref()
-        .is_some_and(|game| game.exe_present());
-    let color = if found { GOOD } else { BAD };
-    ui.add(
-        egui::TextEdit::singleline(&mut launcher.override_text)
-            .text_color(color)
-            .desired_width(f32::INFINITY),
+    let whole = ui.max_rect();
+    let left_width = (whole.width() - SETTINGS_COLUMN_GAP_PX) * SETTINGS_LEFT_SHARE;
+    let top = whole.top() + SETTINGS_TOP_GAP_PX;
+    let left = Rect::from_min_max(
+        pos2(whole.left(), top),
+        pos2(whole.left() + left_width, whole.bottom()),
     );
-    ui.horizontal(|ui| {
-        if ui.button("Apply").clicked() {
-            launcher.apply_override();
-        }
-        if ui.button("Find").clicked() {
-            launcher.find_game();
-        }
+    let right = Rect::from_min_max(
+        pos2(left.right() + SETTINGS_COLUMN_GAP_PX, top),
+        whole.right_bottom(),
+    );
+    ui.scope_builder(UiBuilder::new().max_rect(left), |ui| {
+        ScrollArea::vertical()
+            .id_salt("settings-left")
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                page_section(ui, 0, |ui| draw_game_section(ui, launcher));
+                ui.add_space(SETTINGS_SECTION_GAP_PX);
+                page_section(ui, 2, |ui| draw_in_game_section(ui, launcher, forms));
+            });
     });
-    match &launcher.game {
-        Some(game) if game.exe_present() => {
-            ui.colored_label(GOOD, format!("found: {}", game.game_dir.display()));
-        }
-        Some(game) => {
-            ui.colored_label(
-                BAD,
-                format!(
-                    "not found: no game executable in {}",
-                    game.game_dir.display()
-                ),
-            );
-        }
-        None => {
-            ui.colored_label(BAD, "not found: type the folder and press Apply");
-        }
-    }
-}
-
-fn draw_install_status(ui: &mut Ui, launcher: &Launcher) {
-    egui::Grid::new("install-status")
-        .num_columns(2)
-        .show(ui, |ui| {
-            ui.label("Mod");
-            let (text, color) = if !launcher.profile.support.install {
-                ("mod not built yet".to_owned(), MUTED)
-            } else {
-                match launcher.mod_status {
-                    ModStatus::NotInstalled => ("not installed".to_owned(), WARN),
-                    ModStatus::Current => ("installed, current build".to_owned(), GOOD),
-                    ModStatus::Outdated => ("installed, older build".to_owned(), WARN),
-                    ModStatus::Foreign => (
-                        format!(
-                            "a different {} is in the game folder",
-                            launcher.profile.loader_dll_name
-                        ),
-                        BAD,
-                    ),
+    ui.scope_builder(UiBuilder::new().max_rect(right), |ui| {
+        ScrollArea::vertical()
+            .id_salt("settings-right")
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                page_section(ui, 1, |ui| draw_updates_section(ui, launcher));
+                ui.add_space(SETTINGS_SECTION_GAP_PX);
+                page_section(ui, 3, |ui| draw_window_section(ui, launcher));
+                if launcher.profile.support.saves {
+                    ui.add_space(SETTINGS_SECTION_GAP_PX);
+                    page_section(ui, 4, |ui| draw_saves_section(ui, launcher));
                 }
-            };
-            ui.colored_label(color, text);
-            ui.end_row();
-            ui.label("Build");
-            match &launcher.dll_source {
-                Some(path) => ui.label(path.display().to_string()),
-                None => ui.colored_label(
-                    WARN,
-                    format!("no {} next to the launcher", launcher.profile.hook_dll_name),
-                ),
-            };
-            ui.end_row();
-            ui.label("Proton");
-            let prefix = launcher
-                .game
-                .as_ref()
-                .and_then(|game| game.proton_prefix.as_ref());
-            match prefix {
-                Some(path) => ui.label(path.display().to_string()),
-                None => ui.label(RichText::new("none").weak()),
-            };
-            ui.end_row();
-            ui.label("Game process");
-            if launcher.any_game_running {
-                ui.colored_label(WARN, "running");
-            } else {
-                ui.label("not running");
-            }
-            ui.end_row();
-        });
-}
-
-fn draw_install_buttons(ui: &mut Ui, launcher: &mut Launcher) {
-    let ctx = ui.ctx().clone();
-    let has_game = launcher.game.is_some();
-    let can_install = launcher.profile.support.install;
-    let updating = matches!(
-        launcher.updater.state,
-        UpdateState::Checking | UpdateState::Updating
-    );
-    let idle = !launcher.busy() && !updating;
-    ui.horizontal(|ui| {
-        let install_label = match launcher.mod_status {
-            ModStatus::NotInstalled | ModStatus::Foreign => "Install mod",
-            ModStatus::Current | ModStatus::Outdated => "Update mod",
-        };
-        let can_change = has_game && can_install && idle && !launcher.any_game_running;
-        if ui
-            .add_enabled(
-                has_game && can_install && idle,
-                egui::Button::new(install_label),
-            )
-            .clicked()
-        {
-            launcher.start_mod_update(&ctx);
-        }
-        let installed = matches!(
-            launcher.mod_status,
-            ModStatus::Current | ModStatus::Outdated
-        );
-        if ui
-            .add_enabled(can_change && installed, egui::Button::new("Uninstall"))
-            .clicked()
-        {
-            launcher.start_uninstall(&ctx);
-        }
-        if ui
-            .add_enabled(
-                has_game && launcher.profile.support.saves && idle,
-                egui::Button::new("Back up saves"),
-            )
-            .clicked()
-        {
-            launcher.backup_saves();
-        }
-        if ui.add_enabled(idle, egui::Button::new("Refresh")).clicked() {
-            launcher.refresh();
-        }
+            });
     });
-    if launcher.busy() {
-        ui.horizontal(|ui| {
-            ui.spinner();
-            ui.label("working...");
-        });
-    }
-}
-
-fn draw_player_settings(ui: &mut Ui, launcher: &mut Launcher, forms: &mut NetForms) {
-    let mut changed = false;
-    changed |= ui
-        .checkbox(
-            &mut launcher.config.keep_running,
-            "Keep running in the background",
-        )
-        .on_hover_text(
-            "The game keeps playing when its window loses focus (always on in dev builds)",
-        )
-        .changed();
-    changed |= ui
-        .checkbox(&mut launcher.config.event_log, "Show the event log")
-        .on_hover_text("The short messages at the bottom left of the game screen")
-        .changed();
-    if changed {
-        launcher.apply_settings();
-        forms.net.set_player_settings(launcher.player_settings());
-    }
-}
-
-fn draw_updates(ui: &mut Ui, launcher: &mut Launcher) {
-    ui.label(heading_text("Updates"));
-    let ctx = ui.ctx().clone();
-    let default_text = launcher.update_url().unwrap_or_default();
-    let mut server_text = launcher.updater.server_text.take().unwrap_or(default_text);
-    ui.horizontal(|ui| {
-        ui.label("Build server");
-        if ui
-            .add(egui::TextEdit::singleline(&mut server_text).desired_width(320.0))
-            .changed()
-        {
-            let trimmed = server_text.trim().to_owned();
-            launcher.config.update_url = (!trimmed.is_empty()).then_some(trimmed);
-            launcher.apply_settings();
-        }
-    });
-    launcher.updater.server_text = Some(server_text);
-    if launcher.update_url().is_none() {
-        return;
-    }
-    if ui
-        .checkbox(
-            &mut launcher.config.check_for_updates,
-            "Check for updates when the launcher starts",
-        )
-        .changed()
-    {
-        launcher.apply_settings();
-    }
-    if launcher.log_upload_available()
-        && ui
-            .checkbox(
-                &mut launcher.config.send_logs,
-                "Send logs to the build server after each game",
-            )
-            .changed()
-    {
-        launcher.apply_settings();
-    }
-    ui.horizontal(|ui| {
-        let checking = matches!(
-            launcher.updater.state,
-            UpdateState::Checking | UpdateState::Updating
-        );
-        if ui
-            .add_enabled(!checking, egui::Button::new("Check for updates"))
-            .clicked()
-        {
-            launcher.start_update_check(&ctx);
-        }
-        if let UpdateState::Available(update) = launcher.updater.state.clone()
-            && ui
-                .add_enabled(
-                    !checking,
-                    egui::Button::new(format!(
-                        "Update to {}",
-                        short_commit(&update.manifest.commit)
-                    )),
-                )
-                .clicked()
-        {
-            launcher.start_update_apply(&ctx, false);
-        }
-    });
-    match &launcher.updater.state {
-        UpdateState::Idle => {}
-        UpdateState::Checking => {
-            ui.label("checking...");
-        }
-        UpdateState::UpToDate => {
-            ui.colored_label(GOOD, "up to date");
-        }
-        UpdateState::Updated(short) => {
-            ui.colored_label(GOOD, format!("Mod updated to {short}"));
-        }
-        UpdateState::Available(update) => {
-            ui.colored_label(
-                WARN,
-                format!(
-                    "update available: {}",
-                    short_commit(&update.manifest.commit)
-                ),
-            );
-        }
-        UpdateState::Updating => {
-            ui.label("downloading and installing...");
-        }
-        UpdateState::Failed(message) => {
-            ui.colored_label(BAD, message);
-        }
-    }
-    ui.separator();
 }

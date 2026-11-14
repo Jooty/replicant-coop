@@ -140,7 +140,7 @@ pub(super) fn place_partner_icon(hud: *mut c_void) -> Result<Outcome, Failure> {
 
 fn partner_and_player_positions() -> Option<([f32; 3], [f32; 3])> {
     let view = net::handle()?.view();
-    let remote = view.remote.as_ref()?;
+    let remote = view.partner_state()?;
     let local = view.local.as_ref()?;
     let same_phase = remote.state.phase == local.phase;
     let fresh = remote.age().as_millis() <= PARTNER_STATE_TIMEOUT_MS;

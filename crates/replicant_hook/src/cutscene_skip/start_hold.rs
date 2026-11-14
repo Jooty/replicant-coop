@@ -84,8 +84,7 @@ fn guest_waits_for_host(build: &VerifiedBuild, view: &NetShared) -> bool {
         .ok()
         .and_then(|name| PhaseEntry::index_of(&name))
         .and_then(|index| u16::try_from(index).ok());
-    view.remote
-        .as_ref()
+    view.partner_state()
         .is_some_and(|remote| Some(remote.state.phase) == local_phase)
 }
 

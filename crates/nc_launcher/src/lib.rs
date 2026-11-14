@@ -8,6 +8,7 @@ pub mod logs;
 pub mod net;
 pub mod proton;
 pub mod saves;
+pub mod seat_round;
 pub mod second_copy;
 pub mod steam;
 pub mod update;

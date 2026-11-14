@@ -1,4 +1,5 @@
 mod arrays;
+mod changed_slot;
 mod ending_session;
 mod feed;
 mod header;
@@ -7,11 +8,13 @@ mod mirror;
 mod player_local_flags;
 mod rank;
 mod save_rule;
+mod seat;
 mod sidecar;
 mod slot_story;
 
 pub(crate) use arrays::fnv_hash;
 pub use arrays::{StoryArrays, StoryKey};
+pub use changed_slot::changed_slot;
 pub use ending_session::EndingRecordsSession;
 pub use feed::{FeedSend, StoryFeed};
 pub use header::{
@@ -25,6 +28,7 @@ pub use rank::{StoryRank, part_of_phase};
 pub use save_rule::{
     SlotOutcome, StoryRule, StorySource, apply_story_rule, best_story_for_name, save_file_is_valid,
 };
+pub use seat::{SeatError, check_seat, seat_bytes_of, session_file_with_seat};
 pub use sidecar::{decode_high_water_sidecar, encode_high_water_sidecar};
 pub use slot_story::{SlotStory, fix_slot_checksum, slot_checksum, slot_player_name};
 
@@ -45,6 +49,7 @@ pub const SLOT_CHECKSUM_COVERED_BYTES: usize = 0xC20;
 pub const SLOT_BYTES: usize = 0x9260;
 pub const SLOTS_FILE_OFFSET: usize = 0x8160;
 pub const SAVE_FILE_SLOT_COUNT: usize = 7;
+pub const SAVE_FILE_SLOT_MASK_OFFSET: usize = 0x6C;
 pub const SAVE_FILE_BYTES: usize = 0x4_8200;
 pub const GAME_FLAG_SET_FUNCTION_RVA: u32 = 0x3B_0240;
 pub const GAME_FLAG_CLEAR_FUNCTION_RVA: u32 = 0x3B_0210;
@@ -63,7 +68,7 @@ pub const STORY_MESSAGES_KEPT_BEFORE_ARMING: usize = 512;
 pub const STORY_REQUEST_RETRY_MS: u64 = 5_000;
 pub const RANK_SIDECAR_MAGIC: [u8; 4] = *b"RCRK";
 pub const RANK_SIDECAR_VERSION: u8 = 2;
-pub const RANK_SIDECAR_FILE_NAME: &str = "GAMEDATA.coop.rank";
+pub const RANK_SIDECAR_SUFFIX: &str = ".rank";
 pub const HEADER_BYTES: usize = 0x8158;
 pub const HEADER_CHECKSUM_OFFSET: usize = 0x8154;
 pub const ENDING_CLEAR_BITS_HEADER_OFFSET: usize = 0x04;

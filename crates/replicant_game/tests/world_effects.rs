@@ -1,6 +1,7 @@
 use replicant_game::effects::{
     HitSparkNames, LiveEffects, MAX_TRAILED_WORLD_EFFECTS, WORLD_EFFECT_MOVE_INTERVAL_MS,
-    WorldEffectTrail, hit_spark_log_line, read_world_effect, spawn_is_sent,
+    WorldEffectTrail, hit_spark_log_line, read_world_effect, spawn_is_drawn_by_shot_sync,
+    spawn_is_sent,
 };
 use replicant_proto::WORLD_EFFECT_TRANSFORM_FLOATS;
 
@@ -8,6 +9,8 @@ use crate::fake_memory::FakeMemory;
 
 const NAME: u64 = 0x3_0000_0000;
 const MATRIX: u64 = 0x3_1000_0000;
+const SHOT_SLOT_CREATE_BY_ID_RETURN_RVA: u32 = 0x32_198E;
+const STYLED_EFFECT_CREATE_BY_ID_RETURN_RVA: u32 = 0x31_D3FF;
 
 fn at(x: f32) -> [f32; WORLD_EFFECT_TRANSFORM_FLOATS] {
     [1.0, 0.0, 0.0, x, 0.0, 1.0, 0.0, 2.0, 0.0, 0.0, 1.0, 3.0]
@@ -58,6 +61,25 @@ fn any_effect_spawned_by_name_is_read_while_the_hit_wants_every_spark() {
         Some(("efE_enemyHit01".to_owned(), at(5.0)))
     );
     assert_eq!(read_world_effect(&memory, 0, MATRIX, true).unwrap(), None);
+}
+
+#[test]
+fn a_shot_slot_effect_is_left_to_the_shot_sync() {
+    assert!(spawn_is_drawn_by_shot_sync(
+        SHOT_SLOT_CREATE_BY_ID_RETURN_RVA
+    ));
+}
+
+#[test]
+fn a_styled_start_or_hit_effect_of_a_shot_is_still_sent() {
+    assert!(!spawn_is_drawn_by_shot_sync(
+        STYLED_EFFECT_CREATE_BY_ID_RETURN_RVA
+    ));
+}
+
+#[test]
+fn a_spawn_outside_any_create_by_id_is_still_sent() {
+    assert!(!spawn_is_drawn_by_shot_sync(0));
 }
 
 #[test]

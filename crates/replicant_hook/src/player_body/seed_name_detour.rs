@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use replicant_game::offsets::{PLAYABLE_SEED_NAME_FUNCTION_RVA, SEED_NAME_TABLE_RVA};
 use replicant_game::puppet::{SEED_NAME_TABLE_STRIDE, body_info, own_seed_swap};
 use replicant_game::stay_together::FollowRole;
-use replicant_proto::PartnerBody;
+use replicant_proto::GUEST_BODY;
 
 use crate::build_gate::VerifiedBuild;
 use crate::diagnostics::log_line;
@@ -16,21 +16,19 @@ use crate::net;
 use crate::player_body::real_body::note_seed_in_use;
 
 static ORIGINAL_GETTER: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
-static HOOKED: OnceLock<(VerifiedBuild, PartnerBody)> = OnceLock::new();
+static HOOKED: OnceLock<VerifiedBuild> = OnceLock::new();
 
 type GetSeedName = unsafe extern "system" fn(*mut c_void) -> *const u8;
 
-pub fn install(build: VerifiedBuild, body: PartnerBody) {
-    if HOOKED.set((build, body)).is_err() {
+pub fn install(build: VerifiedBuild) {
+    if HOOKED.set(build).is_err() {
         return;
     }
-    if body != PartnerBody::Nier {
-        let info = body_info(body);
-        log_line(&format!(
-            "player body: as a guest seeds {:?} become {} at phase load ({})",
-            info.own_seed_replaces, info.own_seed_name, info.own_body_changes
-        ));
-    }
+    let info = body_info(GUEST_BODY);
+    log_line(&format!(
+        "player body: as a guest seeds {:?} become {} at phase load ({})",
+        info.own_seed_replaces, info.own_seed_name, info.own_body_changes
+    ));
     let address = (build.module_base() + u64::from(PLAYABLE_SEED_NAME_FUNCTION_RVA)) as usize;
     #[expect(unsafe_code, reason = "hooks the playable seed name getter by address")]
     // SAFETY: the RVA starts the seed name getter (this, returns a NUL-terminated name; never
@@ -67,7 +65,7 @@ extern "system" fn seed_name_detour(this: *mut c_void) -> *const u8 {
     reason = "reads the game's NUL-terminated seed name strings"
 )]
 fn own_body_seed(returned: *const u8) -> Option<*const u8> {
-    let (build, body) = HOOKED.get()?;
+    let build = HOOKED.get()?;
     if returned.is_null() {
         return None;
     }
@@ -76,7 +74,7 @@ fn own_body_seed(returned: *const u8) -> Option<*const u8> {
     let role = net::handle().map_or(FollowRole::Unknown, |net| {
         FollowRole::from_slot(net.view().local_slot)
     });
-    let Some(swap) = own_seed_swap(role, returned_name, *body) else {
+    let Some(swap) = own_seed_swap(role, returned_name) else {
         note_real_body(returned_name, role, false);
         return None;
     };
@@ -99,7 +97,7 @@ fn own_body_seed(returned: *const u8) -> Option<*const u8> {
         swap.to, swap.from
     ));
     note_real_body(swap.to, role, true);
-    crate::kaine::set_her_level_before_player_is_built(build);
+    crate::kaine::log_her_level_before_player_is_built(build);
     Some(replacement)
 }
 

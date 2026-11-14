@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use replicant_hook::net::{
     AUTO_CONFIG_FILE_NAME, AutoConfig, AutoConfigError, DEFAULT_LOG_FILE_NAME, resolve_log_path,
 };
-use replicant_proto::PartnerBody;
 
 fn scratch_folder(test_name: &str) -> PathBuf {
     let folder = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
@@ -22,29 +21,23 @@ fn a_link_port_and_name_are_read() {
 }
 
 #[test]
-fn the_body_key_picks_nier_or_the_prologue_character_and_defaults_to_none() {
-    let nier = AutoConfig::parse("body = \"nier\"\n").expect("valid");
-    let prologue = AutoConfig::parse("body = \"prologue\"\n").expect("valid");
+fn a_body_key_left_in_an_old_link_file_is_read_and_changes_nothing() {
+    for old in ["nier", "prologue", "kaine", "kaineE", "somebody"] {
+        let config =
+            AutoConfig::parse(&format!("link = 47200\nbody = \"{old}\"\n")).expect("valid");
+        assert_eq!(config.link, Some(47200));
+    }
+}
+
+#[test]
+fn the_companion_rows_from_the_scripts_are_on_unless_switched_off() {
     let unset = AutoConfig::parse("link = 47200\n").expect("valid");
-    assert_eq!(nier.body, Some(PartnerBody::Nier));
-    assert_eq!(prologue.body, Some(PartnerBody::PrologueCharacter));
-    assert_eq!(unset.body, None);
-}
-
-#[test]
-fn the_body_key_kaine_picks_her_and_the_old_seed_name_still_reads() {
-    let kaine = AutoConfig::parse("body = \"kaine\"\n").expect("valid");
-    let old_name = AutoConfig::parse("body = \"kaineE\"\n").expect("valid");
-    assert_eq!(kaine.body, Some(PartnerBody::SeedKaineE));
-    assert_eq!(old_name.body, Some(PartnerBody::SeedKaineE));
-}
-
-#[test]
-fn an_unknown_body_name_is_invalid() {
-    assert!(matches!(
-        AutoConfig::parse("body = \"somebody\"\n"),
-        Err(AutoConfigError::Invalid(_))
-    ));
+    assert!(unset.companion_rows_from_scripts_enabled());
+    let off =
+        AutoConfig::parse("link = 47200\ncompanion_rows_from_scripts = false\n").expect("valid");
+    assert!(!off.companion_rows_from_scripts_enabled());
+    let on = AutoConfig::parse("companion_rows_from_scripts = true\n").expect("valid");
+    assert!(on.companion_rows_from_scripts_enabled());
 }
 
 #[test]
@@ -323,16 +316,24 @@ fn the_environment_cannot_mix_a_new_game_with_a_file_boot_slot() {
 }
 
 #[test]
-fn the_body_environment_variable_overrides_the_file() {
-    let file = AutoConfig::parse("link = 47200\nbody = \"nier\"\n").expect("valid");
-    let config = AutoConfig::layered(Some(file), environment(&[("NIER_COOP_BODY", "prologue")]))
-        .expect("valid")
-        .expect("present");
-    assert_eq!(config.body, Some(PartnerBody::PrologueCharacter));
-    let kaine = AutoConfig::layered(None, environment(&[("NIER_COOP_BODY", "kaine")]))
-        .expect("valid")
-        .expect("present");
-    assert_eq!(kaine.body, Some(PartnerBody::SeedKaineE));
-    let bad = AutoConfig::layered(None, environment(&[("NIER_COOP_BODY", "somebody")]));
-    assert!(matches!(bad, Err(AutoConfigError::Invalid(_))));
+fn the_old_body_environment_variable_is_not_read() {
+    let config =
+        AutoConfig::layered(None, environment(&[("NIER_COOP_BODY", "prologue")])).expect("valid");
+    assert_eq!(config, None);
+}
+
+#[test]
+fn the_coop_save_file_is_read_and_defaults_to_none() {
+    let named = AutoConfig::parse("coop_save_file = \"GAMEDATA.coop.seat\"\n").expect("valid");
+    let unset = AutoConfig::parse("").expect("valid");
+    assert_eq!(named.coop_save_file.as_deref(), Some("GAMEDATA.coop.seat"));
+    assert_eq!(unset.coop_save_file, None);
+}
+
+#[test]
+fn an_unusable_coop_save_file_still_reads_so_the_mod_can_refuse_it() {
+    let config =
+        AutoConfig::parse("link = 5000\ncoop_save_file = \"../GAMEDATA\"\n").expect("valid");
+    assert_eq!(config.link, Some(5000));
+    assert_eq!(config.coop_save_file.as_deref(), Some("../GAMEDATA"));
 }

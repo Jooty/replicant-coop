@@ -19,5 +19,9 @@ pub trait GameMessage: Clone + Debug + PartialEq + Serialize + DeserializeOwned 
 
     fn ordered_tick(&self) -> Option<u32>;
 
+    fn forwarded_to_other_guests(&self) -> bool {
+        false
+    }
+
     fn validate(&self) -> Result<(), WireError>;
 }

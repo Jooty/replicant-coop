@@ -1,3 +1,4 @@
+use nc_wire::{STORY_MODE, SessionRules};
 use replicant_proto::{
     BuildGate, CombatEvent, Hello, MAX_DISPLAY_NAME_BYTES, MAX_MESSAGE_BYTES,
     MAX_RIDDEN_BOAR_OFFSET_ABS, MAX_WEAPON_ID, MAX_WEAPON_LEVEL, Message, MotionState,
@@ -74,6 +75,10 @@ fn every_message_kind_survives_a_round_trip() {
         version: PROTOCOL_VERSION,
         slot: 1,
         host_name: "Host".to_owned(),
+        rules: SessionRules {
+            mode: STORY_MODE,
+            max_players: 2,
+        },
     }));
     round_trip(Message::Reject(Reject {
         reason: RejectReason::BuildMismatch,
@@ -292,6 +297,10 @@ fn a_welcome_for_a_slot_beyond_the_player_limit_is_refused() {
         version: PROTOCOL_VERSION,
         slot: 2,
         host_name: "Host".to_owned(),
+        rules: SessionRules {
+            mode: STORY_MODE,
+            max_players: 2,
+        },
     });
     assert!(matches!(
         encode(&message),

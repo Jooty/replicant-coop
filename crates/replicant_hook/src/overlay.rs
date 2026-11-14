@@ -19,6 +19,7 @@ mod party_frame_tuning_panel;
 mod replicant_menu;
 mod replicant_overlay;
 mod settings_section;
+mod spell_size_panel;
 mod status_lines;
 mod stay_together_panel;
 mod story_relay_section;

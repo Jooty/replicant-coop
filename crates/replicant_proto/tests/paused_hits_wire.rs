@@ -10,7 +10,7 @@ fn a_paused_hits_choice_round_trips_and_is_relayed() {
         assert_eq!(message.validate(), Ok(()));
         assert_eq!(decode(&encode(&message).unwrap()), Ok(message));
     }
-    assert_eq!(PROTOCOL_VERSION, 48);
+    assert_eq!(PROTOCOL_VERSION, 67);
 }
 
 #[test]

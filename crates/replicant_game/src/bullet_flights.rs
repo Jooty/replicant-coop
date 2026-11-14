@@ -1,9 +1,13 @@
 mod scan;
+mod shot_cue_board;
 mod smoothing;
 mod table;
 mod tracker;
 
 pub use scan::{SightedBullet, bullets_of_player, partner_effect_id, read_bullet, style_is_set};
+pub use shot_cue_board::{
+    CueOnCopy, NO_COPY_TO_END, NO_COPY_TO_FOLLOW, ShotCueBoard, one_shot_transform,
+};
 pub use smoothing::{FlightSample, smoothed_transform};
 pub use table::BulletFlightTable;
 pub use tracker::BulletTracker;

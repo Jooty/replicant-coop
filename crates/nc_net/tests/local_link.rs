@@ -1,9 +1,11 @@
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use nc_net::{
-    Channel, DisconnectReason, LINK_GAME_PEER, LINK_LAUNCHER_PEER, LocalLinkTransport, Transport,
-    TransportEvent,
+    Channel, DisconnectReason, LINK_ADDRESS, LINK_GAME_PEER, LINK_LAUNCHER_PEER, LINK_VERSION,
+    LocalLinkTransport, Transport, TransportEvent,
 };
 use nc_wire::BuildGate;
 
@@ -16,6 +18,9 @@ const OTHER_BUILD: BuildGate = BuildGate {
     size_of_image: 2,
 };
 const WAIT_LIMIT: Duration = Duration::from_secs(10);
+const LINK_MAGIC: &[u8; 4] = b"RCLK";
+const ACK_BAD_HELLO: u8 = 3;
+const LINK_VERSION_BEFORE_THE_ENVELOPE: u16 = 1;
 
 fn wait_for(
     transport: &mut LocalLinkTransport,
@@ -197,4 +202,29 @@ fn the_launcher_reports_its_port_in_the_invite() {
     let (launcher, invite) = launcher();
     let port = launcher.local_port().expect("bound");
     assert_eq!(invite.as_str(), format!("link-{port}"));
+}
+
+#[test]
+fn a_link_of_version_one_is_refused() {
+    assert_eq!(LINK_VERSION, 3);
+    let (mut launcher, _invite) = launcher();
+    let port = launcher.local_port().expect("bound");
+    let mut old_game = TcpStream::connect((LINK_ADDRESS, port)).expect("dials");
+    old_game
+        .set_read_timeout(Some(WAIT_LIMIT))
+        .expect("sets a timeout");
+    let mut hello = LINK_MAGIC.to_vec();
+    hello.extend_from_slice(&LINK_VERSION_BEFORE_THE_ENVELOPE.to_be_bytes());
+    hello.extend_from_slice(&BUILD.time_date_stamp.to_be_bytes());
+    hello.extend_from_slice(&BUILD.size_of_image.to_be_bytes());
+    old_game.write_all(&hello).expect("writes the hello");
+    let mut ack = [0u8; 1];
+    old_game.read_exact(&mut ack).expect("reads the answer");
+    assert_eq!(ack[0], ACK_BAD_HELLO);
+    let mut events = Vec::new();
+    assert!(!wait_for_for(
+        &mut launcher,
+        &mut events,
+        Duration::from_millis(300)
+    ));
 }

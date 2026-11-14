@@ -1,7 +1,7 @@
 use crate::memory::{GameMemory, MemoryError};
 use crate::offsets::{
-    ENTITY_HEALTH_OFFSET, ENTITY_LEVEL_OFFSET, ENTITY_MAGIC_OFFSET, ENTITY_RVA,
-    PLAYER_PARAM_ARRAY_RVA, PLAYER_PARAM_MAX_HEALTH_OFFSET, PLAYER_PARAM_MAX_MAGIC_OFFSET,
+    ENTITY_HEALTH_OFFSET, ENTITY_MAGIC_OFFSET, ENTITY_RVA, PLAYER_PARAM_ARRAY_RVA,
+    PLAYER_PARAM_MAX_HEALTH_OFFSET, PLAYER_PARAM_MAX_MAGIC_OFFSET,
 };
 
 use super::{
@@ -20,7 +20,7 @@ pub struct KaineStatsSynced {
 impl KaineStatsSynced {
     pub fn log_line(&self) -> String {
         format!(
-            "kaine: stats set to hp {}/{}, mp {}/{} (from the protagonist's)",
+            "kaine: stats set to hp {}/{}, mp {}/{} (from her own level's row)",
             self.health, self.max_health, self.magic, self.max_magic
         )
     }
@@ -58,7 +58,7 @@ pub fn sync_kaine_stats<M: GameMemory>(
     if memory.read_i32(save + KAINE_PLAYER_FLAG_SAVE_OFFSET as u64)? != KAINE_PLAYER_FLAG_SET {
         return Ok(None);
     }
-    let level = memory.read_i32(save + u64::from(ENTITY_LEVEL_OFFSET))?;
+    let level = memory.read_i32(save + KAINE_LEVEL_SAVE_OFFSET as u64)?;
     let table = memory.read_u64(base + u64::from(LEVEL_STATS_TABLE_RVA))?;
     if !level_row_in_range(level) || table == 0 {
         return Ok(None);
@@ -72,11 +72,6 @@ pub fn sync_kaine_stats<M: GameMemory>(
             memory.write(param + offset, &bytes)?;
             changed = true;
         }
-    }
-    let her_level = save + KAINE_LEVEL_SAVE_OFFSET as u64;
-    if memory.read_i32(her_level)? != level {
-        memory.write_i32(her_level, level)?;
-        changed = true;
     }
     if !changed {
         return Ok(None);

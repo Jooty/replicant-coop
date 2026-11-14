@@ -6,7 +6,7 @@ use replicant_game::new_game::{TITLE_HOLD_TIMEOUT_MS, TitleHold, TitleHoldInputs
 
 use crate::diagnostics::log_line;
 use crate::event_log::post_event;
-use crate::net::{self, NetState};
+use crate::net::{self, NetSharedExt, NetState};
 
 static HOLD_STARTED: OnceLock<Instant> = OnceLock::new();
 static LINKED_LAUNCH: AtomicBool = AtomicBool::new(false);
@@ -31,15 +31,14 @@ pub(super) fn hold_for_partner() -> bool {
     let decision = title_hold(TitleHoldInputs {
         waited_ms,
         launcher_linked: view.state != NetState::WaitingForLauncher,
-        partner_readiness: view.partner.readiness(),
+        partner_readiness: view.partner_watch().readiness(),
     });
     match decision {
         TitleHold::Hold => {
             if !HOLD_ANNOUNCED.swap(true, Ordering::Relaxed) {
                 log_line("boot: title held until the partner's game is open");
                 let partner = view
-                    .peer_name
-                    .as_deref()
+                    .partner_name()
                     .map_or_else(|| "your partner".to_owned(), str::to_owned);
                 post_event(&format!("Waiting for {partner}'s game"));
             }

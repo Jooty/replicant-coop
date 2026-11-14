@@ -4,6 +4,8 @@ use replicant_game::save_files::COOP_GAMEDATA_FILE_NAME;
 use replicant_game::story_progress::fix_header_checksum;
 use thiserror::Error;
 
+use crate::saves::campaign_backup::{copy_companions_into, restore_companions_from};
+use crate::saves::campaign_drop::drop_campaign;
 use crate::saves::{
     BackupError, GAMEDATA_SIZE, HEADER_SLOT_MASK_OFFSET, SLOT_COUNT, SLOT_STRIDE, SLOTS_START,
     STEAM_SAVE_FOLDER, SlotError, SlotSummary, gamedata_path, parse_slots,
@@ -92,6 +94,7 @@ pub fn copy_slot_into_coop(
         Err(error) => return Err(error.into()),
     };
     let merged = merge_slot(&std::fs::read(vanilla_path)?, coop, from_slot, to_slot)?;
+    drop_campaign(&coop_path, to_slot)?;
     let staging = coop_path.with_extension("coop.tmp");
     std::fs::write(&staging, merged)?;
     std::fs::rename(&staging, &coop_path)?;
@@ -111,7 +114,8 @@ pub fn backup_coop_file(
         return Err(BackupError::AlreadyExists(stamp.to_owned()));
     }
     std::fs::create_dir_all(&destination)?;
-    std::fs::copy(source, destination.join(COOP_GAMEDATA_FILE_NAME))?;
+    std::fs::copy(&source, destination.join(COOP_GAMEDATA_FILE_NAME))?;
+    copy_companions_into(&source, &destination)?;
     Ok(destination)
 }
 
@@ -140,6 +144,7 @@ pub fn restore_coop_backup(
     let staging = target.with_extension("coop.tmp");
     std::fs::write(&staging, bytes)?;
     std::fs::rename(&staging, &target)?;
+    restore_companions_from(&coop_backup_root.join(stamp), &target)?;
     Ok(safety_copy.unwrap_or(source))
 }
 
